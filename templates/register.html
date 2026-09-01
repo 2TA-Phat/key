@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>生徒新規登録</title>
+
+<style>
+    body { font-family: sans-serif; margin: 0; padding: 15px; background: #f5f5f5; }
+    h2 { font-size: 22px; margin-bottom: 10px; }
+
+    .card {
+        background: #fff;
+        padding: 18px;
+        margin: 12px 0;
+        border-radius: 12px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+
+    input {
+        width: 100%;
+        padding: 12px;
+        margin-top: 8px;
+        border-radius: 8px;
+        border: 1px solid #ccc;
+        font-size: 16px;
+    }
+
+    button {
+        width: 100%;
+        padding: 14px;
+        margin-top: 12px;
+        font-size: 18px;
+        border: none;
+        border-radius: 8px;
+        background: #2196F3;
+        color: white;
+    }
+
+    a {
+        text-decoration: none;
+    }
+</style>
+</head>
+
+<body>
+
+<h2>生徒新規登録</h2>
+
+<div class="card">
+    <form action="/register" method="post">
+
+        <label>学籍番号</label>
+        <input type="text" name="student_id" required>
+
+        <label>名前</label>
+        <input type="text" name="name" required>
+
+        <label>学科</label>
+        <input type="text" name="department" required>
+
+        <label>コース</label>
+        <input type="text" name="course" required>
+
+        <label>クラス</label>
+        <input type="text" name="class" required>
+
+        <label>出席番号</label>
+        <input type="number" name="number" required>
+
+        <button type="submit">登録する</button>
+    </form>
+</div>
+
+<div class="card">
+    <a href="/student_submit">
+        <button style="background:#4CAF50;">申請画面へ戻る</button>
+    </a>
+</div>
+
+</body>
+</html>

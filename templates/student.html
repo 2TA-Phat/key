@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>鍵開閉申請</title>
+
+<style>
+    body { font-family: sans-serif; margin: 0; padding: 15px; background: #f5f5f5; }
+    h2 { font-size: 22px; margin-bottom: 10px; }
+
+    .card {
+        background: #fff;
+        padding: 18px;
+        margin: 12px 0;
+        border-radius: 12px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+
+    input, select {
+        width: 100%;
+        padding: 12px;
+        margin-top: 8px;
+        border-radius: 8px;
+        border: 1px solid #ccc;
+        font-size: 16px;
+    }
+
+    button {
+        width: 100%;
+        padding: 14px;
+        margin-top: 12px;
+        font-size: 18px;
+        border: none;
+        border-radius: 8px;
+        background: #4CAF50;
+        color: white;
+    }
+
+    .status-card {
+        background: #fff;
+        padding: 18px;
+        margin: 12px 0;
+        border-radius: 12px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+
+    .approved { color: #4CAF50; font-weight: bold; }
+    .rejected { color: #E53935; font-weight: bold; }
+    .pending { color: #555; font-weight: bold; }
+
+    /* 新規登録ボタン用 */
+    .register-btn {
+        background: #2196F3;
+        color: white;
+        padding: 14px;
+        border: none;
+        border-radius: 8px;
+        font-size: 18px;
+        width: 100%;
+        margin-top: 12px;
+        text-align: center;
+    }
+</style>
+</head>
+
+<body>
+
+<h2>鍵開閉申請フォーム</h2>
+
+<div class="card">
+    <form action="/student_submit" method="post">
+        <label>学籍番号</label>
+        <input type="text" name="student_id" required>
+
+        <label>操作したい教室</label>
+        <select name="key" required>
+            <option value="1TA">1TA</option>
+            <option value="2TA">2TA</option>
+            <option value="2TB">2TB</option>
+            <option value="3TE">3TE</option>
+        </select>
+
+        <label>操作</label>
+        <select name="action" required>
+            <option value="開ける">開ける</option>
+            <option value="閉める">閉める</option>
+        </select>
+
+        <button type="submit">申請する</button>
+    </form>
+
+    <!-- 🔥 新規登録ボタン追加 -->
+    <a href="/register">
+        <button class="register-btn">新規登録はこちら</button>
+    </a>
+</div>
+
+<h2>申請状況の確認</h2>
+
+<div class="card">
+    <form action="/status" method="post">
+        <label>学籍番号</label>
+        <input type="text" name="student_id" required>
+        <button type="submit">確認する</button>
+    </form>
+</div>
+
+{% if results %}
+    <h2>結果</h2>
+    {% for r in results %}
+        <div class="status-card">
+            <div><strong>ID:</strong> {{ r.id }}</div>
+            <div><strong>鍵:</strong> {{ r.key }}</div>
+            <div><strong>操作:</strong> {{ r.action }}</div>
+            <div><strong>状態:</strong>
+                {% if r.status == "承認" %}
+                    <span class="approved">承認</span>
+                {% elif r.status == "却下" %}
+                    <span class="rejected">却下</span>
+                {% else %}
+                    <span class="pending">申請中</span>
+                {% endif %}
+            </div>
+        </div>
+    {% endfor %}
+{% endif %}
+
+</body>
+</html>

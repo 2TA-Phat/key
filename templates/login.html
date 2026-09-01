@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Login</title>
+<style>
+    body { 
+        font-family: sans-serif; 
+        /* Thiết lập hình nền phủ kín toàn màn hình */
+        background-image: url("{{ url_for('static', filename='images/Background_login_images.jpg') }}");
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+
+        display: flex; 
+        justify-content: center; 
+        align-items: center; 
+        height: 100vh; 
+        margin: 0; 
+    }
+    .card { 
+        background: rgba(255, 255, 255, 0.9); /* Nền trắng hơi trong suốt để nhìn rõ form */
+        padding: 30px; 
+        border-radius: 12px; 
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2); 
+        width: 320px; 
+    }
+    h3 { 
+        text-align: center; 
+        margin-top: 0; 
+        margin-bottom: 20px; 
+        color: #333; 
+    }
+    label { 
+        font-size: 14px; 
+        font-weight: bold; 
+        color: #555; 
+    }
+    input { 
+        width: 100%; 
+        padding: 10px; 
+        margin-top: 6px; 
+        margin-bottom: 15px; 
+        border: 1px solid #ccc; 
+        border-radius: 6px; 
+        box-sizing: border-box; 
+        font-size: 15px; 
+    }
+    button { 
+        width: 100%; 
+        padding: 12px; 
+        background: #007bff; 
+        color: white; 
+        border: none; 
+        border-radius: 6px; 
+        font-size: 16px; 
+        font-weight: bold; 
+        cursor: pointer; 
+    }
+    .error { 
+        color: #d9534f; 
+        font-size: 14px; 
+        margin-bottom: 15px; 
+        text-align: center; 
+    }
+</style>
+</head>
+<body>
+<div class="card">
+    <h3>管理者ログイン</h3>
+    {% if error %}
+        <div class="error">{{ error }}</div>
+    {% endif %}
+    <form action="/login" method="post">
+        <label>ユーザー名 (Tài khoản)</label>
+        <input type="text" name="username" required>
+        <label>パスワード (Mật khẩu)</label>
+        <input type="password" name="password" required>
+        <button type="submit">ログイン</button>
+    </form>
+</div>
+</body>
+</html>
