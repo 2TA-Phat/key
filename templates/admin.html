@@ -54,6 +54,8 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+        cursor: pointer;
+        user-select: none;
     }
 
     .menu-item {
@@ -83,6 +85,21 @@
         border: 1px solid #c2c7d0;
         border-radius: 50%;
         display: inline-block;
+    }
+
+    .menu-item.active .circle-icon {
+        border-color: #ffffff;
+    }
+
+    /* Tùy chỉnh danh sách con ẩn/hiện */
+    .submenu-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .submenu-list.collapsed {
+        display: none;
     }
 
     /* --- MAIN CONTENT KHU VỰC CHÍNH --- */
@@ -255,6 +272,18 @@
         <a href="/admin" class="menu-item active">
             <span class="circle-icon"></span> 申請一覧
         </a>
+
+        <!-- Nhóm システム管理 chỉ giữ lại 管理者 -->
+        <li class="menu-category" onclick="toggleSubmenu('system-menu', 'system-arrow')">
+            システム管理 <span id="system-arrow">∨</span>
+        </li>
+        <ul id="system-menu" class="submenu-list">
+            <li>
+                <a href="/admin/managers" class="menu-item">
+                    <span class="circle-icon"></span> 管理者
+                </a>
+            </li>
+        </ul>
     </ul>
 </div>
 
@@ -298,6 +327,19 @@
 </div>
 
 <script>
+    function toggleSubmenu(menuId, arrowId) {
+        const menu = document.getElementById(menuId);
+        const arrow = document.getElementById(arrowId);
+        
+        if (menu.classList.contains('collapsed')) {
+            menu.classList.remove('collapsed');
+            arrow.textContent = '∨';
+        } else {
+            menu.classList.add('collapsed');
+            arrow.textContent = '∧';
+        }
+    }
+
     const pending = {{ pending | tojson }};
     const done = {{ done | tojson }};
 

@@ -5,7 +5,7 @@ from datetime import datetime
 app = Flask(__name__)
 app.secret_key = "super_secret_key"
 
-# Cấu hình Tài khoản & Mật khẩu Admin
+# Cấu hình Mặc định Tài khoản & Mật khẩu Admin
 ADMIN_USER = "admin"
 ADMIN_PASS = "123456"
 
@@ -14,6 +14,7 @@ def init_db():
     conn = sqlite3.connect("app.db")
     cur = conn.cursor()
 
+    # Bảng Học sinh
     cur.execute("""
         CREATE TABLE IF NOT EXISTS students (
             student_id TEXT PRIMARY KEY,
@@ -25,6 +26,7 @@ def init_db():
         )
     """)
 
+    # Bảng Đơn xin mượn chìa khóa
     cur.execute("""
         CREATE TABLE IF NOT EXISTS requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,6 +37,29 @@ def init_db():
             time TEXT
         )
     """)
+
+    # Bảng Quản lý Admin (Managers)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS managers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE,
+            name TEXT,
+            email TEXT,
+            role TEXT,
+            status TEXT
+        )
+    """)
+
+    # Thêm dữ liệu mẫu cho Managers nếu bảng còn trống
+    cur.execute("SELECT COUNT(*) FROM managers")
+    if cur.fetchone()[0] == 0:
+        cur.executemany("""
+            INSERT INTO managers (id, username, name, email, role, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, [
+            (1, "dtmp1", "管理者", "dtmp1@dtmp.jp", "Administrator", "有効"),
+            (2, "dtmp2", "オペレーター", "2dtmp1@dtmp.jp", "Operator", "有効")
+        ])
 
     conn.commit()
     conn.close()
@@ -153,7 +178,6 @@ def users():
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    # Truy vấn thông tin sinh viên kèm thống kê lịch sử xin mượn chìa
     cur.execute("""
         SELECT 
             s.student_id AS contact_id,
@@ -187,7 +211,6 @@ def users():
         total_pending += p_count
         total_done += d_count
 
-        # Xử lý 処理状況: Nếu có yêu cầu chưa duyệt -> 未処理, ngược lại -> 完了
         if p_count > 0:
             item["process_status"] = "未処理"
         else:
@@ -239,6 +262,23 @@ def admin():
     done = [dict(row) for row in done_rows]
 
     return render_template("admin.html", pending=pending, done=done)
+
+# --- 管理者一覧画面 (MỚI BỔ SUNG) ---
+@app.route("/admin/managers")
+def admin_managers():
+    if not session.get("logged_in"):
+        return redirect("/login")
+
+    conn = sqlite3.connect("app.db")
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM managers ORDER BY id ASC")
+    rows = cur.fetchall()
+    conn.close()
+
+    managers = [dict(row) for row in rows]
+    return render_template("managers.html", managers=managers)
 
 # --- 承認・却下・削除 ---
 @app.route("/approve/<int:req_id>")
