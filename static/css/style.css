@@ -1,0 +1,249 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #f4f6f9;
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* --- SIDEBAR BAR BÊN TRÁI --- */
+.sidebar {
+    width: 240px;
+    background-color: #343a40;
+    color: #c2c7d0;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+
+.sidebar-header {
+    padding: 15px;
+    font-size: 14px;
+    font-weight: bold;
+    color: #ffffff;
+    background-color: #2b3035;
+    border-bottom: 1px solid #4b545c;
+}
+
+.sidebar-menu {
+    list-style: none;
+    padding: 10px 0;
+    overflow-y: auto;
+}
+
+.menu-category {
+    padding: 10px 15px;
+    font-size: 13px;
+    font-weight: bold;
+    color: #d0d4da;
+    background-color: #3f474e;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+/* CHỈNH SỬA: Chuẩn hóa khoảng cách và hiệu ứng chuyển màu cho menu item */
+.menu-item {
+    padding: 10px 15px 10px 25px;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #c2c7d0;
+    text-decoration: none;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.menu-item:hover {
+    background-color: #495057;
+    color: #ffffff;
+}
+
+.menu-item.active {
+    background-color: #007bff;
+    color: #ffffff;
+    font-weight: bold;
+}
+
+/* CHỈNH SỬA: Chấm tròn đặc khi ở trạng thái Active */
+.circle-icon {
+    width: 8px;
+    height: 8px;
+    border: 1px solid #c2c7d0;
+    border-radius: 50%;
+    display: inline-block;
+    background-color: transparent;
+    flex-shrink: 0;
+}
+
+.menu-item.active .circle-icon {
+    border-color: #ffffff;
+    background-color: #ffffff; /* Làm đầy chấm tròn trắng */
+}
+
+.submenu-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.submenu-list.collapsed {
+    display: none;
+}
+
+/* --- MAIN CONTENT KHU VỰC CHÍNH --- */
+.main-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* TOP NAVBAR */
+.navbar {
+    height: 50px;
+    background-color: #ffffff;
+    border-bottom: 1px solid #dee2e6;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 15px;
+}
+
+.navbar-left {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.menu-toggle {
+    font-size: 18px;
+    cursor: pointer;
+    color: #6c757d;
+}
+
+.badge-green {
+    background-color: #00e676;
+    color: #000;
+    padding: 4px 12px;
+    font-weight: bold;
+    font-size: 13px;
+    border-radius: 2px;
+}
+
+.navbar-right {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    font-size: 13px;
+}
+
+.badge-admin {
+    background-color: #17a2b8;
+    color: #fff;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+.logout-btn {
+    color: #6c757d;
+    text-decoration: none;
+}
+
+.logout-btn:hover {
+    color: #000;
+}
+
+/* CONTENT BODY */
+.content {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.page-title {
+    font-size: 20px;
+    font-weight: normal;
+    margin-bottom: 20px;
+    color: #333;
+}
+
+/* CARD & TABLE STYLE */
+.card {
+    background: #ffffff;
+    padding: 15px;
+    margin-bottom: 15px;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    border: 1px solid #e0e0e0;
+}
+
+.time {
+    font-size: 15px;
+    font-weight: bold;
+    margin-bottom: 8px;
+    color: #333;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 8px;
+    font-size: 13px;
+    color: #555;
+    margin-bottom: 12px;
+}
+
+.buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.btn {
+    padding: 6px 12px;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    color: white;
+}
+
+.btn-approve { background-color: #28a745; }
+.btn-reject { background-color: #dc3545; }
+.btn-delete { background-color: #6c757d; }
+
+.pagination {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    margin: 10px 0;
+}
+
+.pagination button {
+    padding: 4px 10px;
+    font-size: 12px;
+    border: 1px solid #ced4da;
+    background: #fff;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.pagination button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.status-approved { color: #28a745; font-weight: bold; }
+.status-rejected { color: #dc3545; font-weight: bold; }

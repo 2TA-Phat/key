@@ -5,275 +5,38 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TIST事務所 環境管理画面</title>
 
-<style>
-    * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-    }
-
-    body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        background-color: #f4f6f9;
-        display: flex;
-        height: 100vh;
-        overflow: hidden;
-    }
-
-    /* --- SIDEBAR BAR BÊN TRÁI --- */
-    .sidebar {
-        width: 240px;
-        background-color: #343a40;
-        color: #c2c7d0;
-        display: flex;
-        flex-direction: column;
-        flex-shrink: 0;
-    }
-
-    .sidebar-header {
-        padding: 15px;
-        font-size: 14px;
-        font-weight: bold;
-        color: #ffffff;
-        background-color: #2b3035;
-        border-bottom: 1px solid #4b545c;
-    }
-
-    .sidebar-menu {
-        list-style: none;
-        padding: 10px 0;
-        overflow-y: auto;
-    }
-
-    .menu-category {
-        padding: 10px 15px 5px 15px;
-        font-size: 13px;
-        font-weight: bold;
-        color: #d0d4da;
-        background-color: #3f474e;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        cursor: pointer;
-        user-select: none;
-    }
-
-    .menu-item {
-        padding: 8px 15px 8px 25px;
-        font-size: 13px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        color: #c2c7d0;
-        text-decoration: none;
-    }
-
-    .menu-item:hover {
-        background-color: #495057;
-        color: #ffffff;
-    }
-
-    .menu-item.active {
-        background-color: #007bff;
-        color: #ffffff;
-    }
-
-    .circle-icon {
-        width: 10px;
-        height: 10px;
-        border: 1px solid #c2c7d0;
-        border-radius: 50%;
-        display: inline-block;
-    }
-
-    .menu-item.active .circle-icon {
-        border-color: #ffffff;
-    }
-
-    /* Tùy chỉnh danh sách con ẩn/hiện */
-    .submenu-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-    }
-
-    .submenu-list.collapsed {
-        display: none;
-    }
-
-    /* --- MAIN CONTENT KHU VỰC CHÍNH --- */
-    .main-wrapper {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-    }
-
-    /* TOP NAVBAR */
-    .navbar {
-        height: 50px;
-        background-color: #ffffff;
-        border-bottom: 1px solid #dee2e6;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0 15px;
-    }
-
-    .navbar-left {
-        display: flex;
-        align-items: center;
-        gap: 15px;
-    }
-
-    .menu-toggle {
-        font-size: 18px;
-        cursor: pointer;
-        color: #6c757d;
-    }
-
-    .badge-green {
-        background-color: #00e676;
-        color: #000;
-        padding: 4px 12px;
-        font-weight: bold;
-        font-size: 13px;
-        border-radius: 2px;
-    }
-
-    .navbar-right {
-        display: flex;
-        align-items: center;
-        gap: 15px;
-        font-size: 13px;
-    }
-
-    .badge-admin {
-        background-color: #17a2b8;
-        color: #fff;
-        padding: 3px 8px;
-        border-radius: 3px;
-        font-size: 11px;
-        font-weight: bold;
-    }
-
-    .logout-btn {
-        color: #6c757d;
-        text-decoration: none;
-    }
-
-    .logout-btn:hover {
-        color: #000;
-    }
-
-    /* CONTENT BODY */
-    .content {
-        padding: 20px;
-        overflow-y: auto;
-        flex: 1;
-    }
-
-    .page-title {
-        font-size: 20px;
-        font-weight: normal;
-        margin-bottom: 20px;
-        color: #333;
-    }
-
-    /* CARD & TABLE STYLE */
-    .card {
-        background: #ffffff;
-        padding: 15px;
-        margin-bottom: 15px;
-        border-radius: 6px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        border: 1px solid #e0e0e0;
-    }
-
-    .time {
-        font-size: 15px;
-        font-weight: bold;
-        margin-bottom: 8px;
-        color: #333;
-    }
-
-    .info-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 8px;
-        font-size: 13px;
-        color: #555;
-        margin-bottom: 12px;
-    }
-
-    .buttons {
-        display: flex;
-        gap: 8px;
-    }
-
-    .btn {
-        padding: 6px 12px;
-        border: none;
-        border-radius: 4px;
-        font-size: 13px;
-        cursor: pointer;
-        color: white;
-    }
-
-    .btn-approve { background-color: #28a745; }
-    .btn-reject { background-color: #dc3545; }
-    .btn-delete { background-color: #6c757d; }
-
-    .pagination {
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        gap: 10px;
-        margin: 10px 0;
-    }
-
-    .pagination button {
-        padding: 4px 10px;
-        font-size: 12px;
-        border: 1px solid #ced4da;
-        background: #fff;
-        border-radius: 4px;
-        cursor: pointer;
-    }
-
-    .pagination button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-
-    .status-approved { color: #28a745; font-weight: bold; }
-    .status-rejected { color: #dc3545; font-weight: bold; }
-</style>
+<!-- Liên kết đúng file CSS bạn đã tạo -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 
 <body>
 
-<!-- SIDEBAR BAR -->
+<!-- SIDEBAR -->
 <div class="sidebar">
-    <div class="sidebar-header">
-        TIST事務所_管理画面
-    </div>
+    <div class="sidebar-header">TIST事務所_管理画面</div>
     <ul class="sidebar-menu">
-        <li class="menu-category">応募者管理 <span>∨</span></li>
-        <a href="/users" class="menu-item">
-            <span class="circle-icon"></span> ユーザー
-        </a>
-        <a href="#" class="menu-item">
-            <span class="circle-icon"></span> アクションログ
-        </a>
+        <li class="menu-category" onclick="toggleSubmenu('applicant-menu', 'applicant-arrow')">
+            応募者管理 <span id="applicant-arrow">∨</span>
+        </li>
+        <ul id="applicant-menu" class="submenu-list">
+            <li>
+                <a href="/users" class="menu-item">
+                    <span class="circle-icon"></span> ユーザー
+                </a>
+            </li>
+        </ul>
 
-        <li class="menu-category">鍵管理 <span>∨</span></li>
-        <a href="/admin" class="menu-item active">
-            <span class="circle-icon"></span> 申請一覧
-        </a>
+        <li class="menu-category" onclick="toggleSubmenu('key-menu', 'key-arrow')">
+            鍵管理 <span id="key-arrow">∨</span>
+        </li>
+        <ul id="key-menu" class="submenu-list">
+            <li>
+                <a href="/admin" class="menu-item active">
+                    <span class="circle-icon"></span> 申請一覧
+                </a>
+            </li>
+        </ul>
 
-        <!-- Nhóm システム管理 chỉ giữ lại 管理者 -->
         <li class="menu-category" onclick="toggleSubmenu('system-menu', 'system-arrow')">
             システム管理 <span id="system-arrow">∨</span>
         </li>
@@ -289,7 +52,6 @@
 
 <!-- MAIN CONTENT WRAPPER -->
 <div class="main-wrapper">
-    <!-- NAVBAR TOP -->
     <div class="navbar">
         <div class="navbar-left">
             <span class="menu-toggle">☰</span>
@@ -302,7 +64,6 @@
         </div>
     </div>
 
-    <!-- MAIN BODY -->
     <div class="content">
         <h2 class="page-title">ダッシュボード (鍵管理)</h2>
 
@@ -326,141 +87,17 @@
     </div>
 </div>
 
+<!-- 1. Lấy dữ liệu từ Flask gán vào biến JS -->
 <script>
-    function toggleSubmenu(menuId, arrowId) {
-        const menu = document.getElementById(menuId);
-        const arrow = document.getElementById(arrowId);
-        
-        if (menu.classList.contains('collapsed')) {
-            menu.classList.remove('collapsed');
-            arrow.textContent = '∨';
-        } else {
-            menu.classList.add('collapsed');
-            arrow.textContent = '∧';
-        }
-    }
-
     const pending = {{ pending | tojson }};
     const done = {{ done | tojson }};
+</script>
 
-    let pendingPage = 1;
-    let donePage = 1;
+<!-- 2. Nhúng đúng file JS bạn đã tạo -->
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
 
-    const pendingPerPage = 5;
-    const donePerPage = 5;
-
-    function safePage(page, totalPages) {
-        if (totalPages === 0) return 1;
-        if (page < 1) return 1;
-        if (page > totalPages) return totalPages;
-        return page;
-    }
-
-    function renderPagination(containerTop, containerBottom, page, totalPages, onPageChange) {
-        const html = `
-            <button onclick="${onPageChange}(${page - 1})" ${page <= 1 ? "disabled" : ""}>前へ</button>
-            <span style="font-size:12px;">[${page}] / ${totalPages}</span>
-            <button onclick="${onPageChange}(${page + 1})" ${page >= totalPages ? "disabled" : ""}>次へ</button>
-        `;
-        containerTop.innerHTML = html;
-        containerBottom.innerHTML = html;
-    }
-
-    function renderPending() {
-        const list = document.getElementById("pending-list");
-        const top = document.getElementById("pending-top");
-        const bottom = document.getElementById("pending-bottom");
-
-        const totalPages = Math.ceil(pending.length / pendingPerPage);
-        pendingPage = safePage(pendingPage, totalPages);
-
-        const start = (pendingPage - 1) * pendingPerPage;
-        const items = pending.slice(start, start + pendingPerPage);
-
-        if (items.length === 0) {
-            list.innerHTML = '<div class="card" style="color:#777;">未処理のデータはありません。</div>';
-            renderPagination(top, bottom, 1, 1, "changePendingPage");
-            return;
-        }
-
-        list.innerHTML = items.map(item => `
-            <div class="card">
-                <div class="time">${item.time}</div>
-                <div class="info-grid">
-                    <div><strong>教室:</strong> ${item.key}（${item.action}）</div>
-                    <div><strong>名前:</strong> ${item.name}</div>
-                    <div><strong>学籍番号:</strong> ${item.student_id}</div>
-                    <div><strong>学科:</strong> ${item.department}</div>
-                    <div><strong>コース:</strong> ${item.course}</div>
-                    <div><strong>クラス:</strong> ${item.class}</div>
-                    <div><strong>出席番号:</strong> ${item.number}</div>
-                </div>
-                <div class="buttons">
-                    <button class="btn btn-approve" onclick="location.href='/approve/${item.id}'">承認</button>
-                    <button class="btn btn-reject" onclick="location.href='/reject/${item.id}'">却下</button>
-                    <button class="btn btn-delete" onclick="location.href='/delete/${item.id}'">削除</button>
-                </div>
-            </div>
-        `).join("");
-
-        renderPagination(top, bottom, pendingPage, totalPages || 1, "changePendingPage");
-    }
-
-    function renderDone() {
-        const list = document.getElementById("done-list");
-        const top = document.getElementById("done-top");
-        const bottom = document.getElementById("done-bottom");
-
-        const totalPages = Math.ceil(done.length / donePerPage);
-        donePage = safePage(donePage, totalPages);
-
-        const start = (donePage - 1) * donePerPage;
-        const items = done.slice(start, start + donePerPage);
-
-        if (items.length === 0) {
-            list.innerHTML = '<div class="card" style="color:#777;">操作済みのデータはありません。</div>';
-            renderPagination(top, bottom, 1, 1, "changeDonePage");
-            return;
-        }
-
-        list.innerHTML = items.map(item => `
-            <div class="card">
-                <div class="time">${item.time}</div>
-                <div class="info-grid">
-                    <div><strong>教室:</strong> ${item.key}（${item.action}）</div>
-                    <div><strong>名前:</strong> ${item.name}</div>
-                    <div><strong>学籍番号:</strong> ${item.student_id}</div>
-                    <div><strong>学科:</strong> ${item.department}</div>
-                    <div><strong>コース:</strong> ${item.course}</div>
-                    <div><strong>クラス:</strong> ${item.class}</div>
-                    <div><strong>出席番号:</strong> ${item.number}</div>
-                    <div><strong>状態:</strong> 
-                        <span class="${item.status === '承認' ? 'status-approved' : 'status-rejected'}">
-                            ${item.status}
-                        </span>
-                    </div>
-                </div>
-                <div class="buttons">
-                    <button class="btn btn-approve" onclick="location.href='/approve/${item.id}'">承認に変更</button>
-                    <button class="btn btn-reject" onclick="location.href='/reject/${item.id}'">却下に変更</button>
-                    <button class="btn btn-delete" onclick="location.href='/delete/${item.id}'">削除</button>
-                </div>
-            </div>
-        `).join("");
-
-        renderPagination(top, bottom, donePage, totalPages || 1, "changeDonePage");
-    }
-
-    function changePendingPage(page) {
-        pendingPage = page;
-        renderPending();
-    }
-
-    function changeDonePage(page) {
-        donePage = page;
-        renderDone();
-    }
-
+<!-- 3. Gọi các hàm vẽ giao diện -->
+<script>
     renderPending();
     renderDone();
 </script>
