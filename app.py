@@ -6,8 +6,7 @@ app = Flask(__name__)
 app.secret_key = "super_secret_key"
 
 # Cấu hình Mặc định Tài khoản & Mật khẩu Admin
-ADMIN_USER = "admin"
-ADMIN_PASS = "123456"
+
 
 # --- DB 初期化 ---
 def init_db():
@@ -42,24 +41,16 @@ def init_db():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS managers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE,
-            name TEXT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT,
+            name TEXT NOT NULL,
             email TEXT,
-            role TEXT,
-            status TEXT
+            role TEXT NOT NULL,
+            status TEXT NOT NULL
         )
     """)
 
-    # Thêm dữ liệu mẫu cho Managers nếu bảng còn trống
-    cur.execute("SELECT COUNT(*) FROM managers")
-    if cur.fetchone()[0] == 0:
-        cur.executemany("""
-            INSERT INTO managers (id, username, name, email, role, status)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, [
-            (1, "dtmp1", "管理者", "dtmp1@dtmp.jp", "Administrator", "有効"),
-            (2, "dtmp2", "オペレーター", "2dtmp1@dtmp.jp", "Operator", "有効")
-        ])
+
 
     conn.commit()
     conn.close()
@@ -70,15 +61,38 @@ init_db()
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
-        
-        if username == ADMIN_USER and password == ADMIN_PASS:
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+
+        conn = sqlite3.connect("app.db")
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT *
+            FROM managers
+            WHERE username = ?
+              AND password = ?
+              AND status = '有効'
+        """, (username, password))
+
+        manager = cur.fetchone()
+        conn.close()
+
+        if manager:
             session["logged_in"] = True
+            session["manager_id"] = manager["id"]
+            session["username"] = manager["username"]
+            session["name"] = manager["name"]
+            session["role"] = manager["role"]
+
             return redirect("/admin")
-        else:
-            return render_template("login.html", error="ユーザー名またはパスワードが違います")
-            
+
+        return render_template(
+            "login.html",
+            error="ユーザー名またはパスワードが違います"
+        )
+
     return render_template("login.html")
 
 @app.route("/logout")
@@ -266,6 +280,7 @@ def admin():
 # --- 管理者一覧画面 (MỚI BỔ SUNG) ---
 @app.route("/admin/managers")
 def admin_managers():
+
     if not session.get("logged_in"):
         return redirect("/login")
 
@@ -279,6 +294,191 @@ def admin_managers():
 
     managers = [dict(row) for row in rows]
     return render_template("managers.html", managers=managers)
+# --- 管理者追加 ---
+@app.route("/admin/managers/add", methods=["GET", "POST"])
+def manager_add():
+    if not session.get("logged_in"):
+        return redirect("/login")
+
+    if request.method == "GET":
+        return render_template("manager_add.html")
+
+    username = request.form.get("username", "").strip()
+    password = request.form.get("password", "")
+    name = request.form.get("name", "").strip()
+    email = request.form.get("email", "").strip()
+    role = request.form.get("role", "Operator")
+    status = request.form.get("status", "有効")
+
+    if not username or not password or not name:
+        return render_template(
+            "manager_add.html",
+            error="必須項目を入力してください。"
+        )
+
+    
+
+    conn = sqlite3.connect("app.db")
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            INSERT INTO managers
+            (username, password, name, email, role, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            username,
+            password,
+            name,
+            email,
+            role,
+            status
+        ))
+
+        conn.commit()
+
+    except sqlite3.IntegrityError:
+        conn.close()
+
+        return render_template(
+            "manager_add.html",
+            error="このユーザー名は既に使用されています。"
+        )
+
+    conn.close()
+    return redirect("/admin/managers")
+
+
+# --- 管理者詳細 ---
+@app.route("/admin/managers/<int:manager_id>")
+def manager_detail(manager_id):
+    if not session.get("logged_in"):
+        return redirect("/login")
+
+    conn = sqlite3.connect("app.db")
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, username, name, email, role, status
+        FROM managers
+        WHERE id = ?
+    """, (manager_id,))
+
+    manager = cur.fetchone()
+    conn.close()
+
+    if not manager:
+        return "管理者が見つかりません", 404
+
+    return render_template(
+        "manager_detail.html",
+        manager=manager
+    )
+
+
+# --- 管理者編集 ---
+@app.route("/admin/managers/<int:manager_id>/edit", methods=["GET", "POST"])
+def manager_edit(manager_id):
+    if not session.get("logged_in"):
+        return redirect("/login")
+
+    conn = sqlite3.connect("app.db")
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    if request.method == "GET":
+        cur.execute("""
+            SELECT id, username, name, email, role, status
+            FROM managers
+            WHERE id = ?
+        """, (manager_id,))
+
+        manager = cur.fetchone()
+        conn.close()
+
+        if not manager:
+            return "管理者が見つかりません", 404
+
+        return render_template(
+            "manager_edit.html",
+            manager=manager
+        )
+
+    username = request.form.get("username", "").strip()
+    password = request.form.get("password", "")
+    name = request.form.get("name", "").strip()
+    email = request.form.get("email", "").strip()
+    role = request.form.get("role", "Operator")
+    status = request.form.get("status", "有効")
+
+    if password:
+        password_hash = generate_password_hash(password)
+
+        cur.execute("""
+            UPDATE managers
+            SET username=?,
+                password=?,
+                name=?,
+                email=?,
+                role=?,
+                status=?
+            WHERE id=?
+        """, (
+            username,
+            password_hash,
+            name,
+            email,
+            role,
+            status,
+            manager_id
+        ))
+
+    else:
+        cur.execute("""
+            UPDATE managers
+            SET username=?,
+                name=?,
+                email=?,
+                role=?,
+                status=?
+            WHERE id=?
+        """, (
+            username,
+            name,
+            email,
+            role,
+            status,
+            manager_id
+        ))
+
+    conn.commit()
+    conn.close()
+
+    return redirect("/admin/managers")
+
+
+# --- 管理者削除 ---
+@app.route("/admin/managers/<int:manager_id>/delete")
+def manager_delete(manager_id):
+    if not session.get("logged_in"):
+        return redirect("/login")
+
+    if session.get("manager_id") == manager_id:
+        return redirect("/admin/managers")
+
+    conn = sqlite3.connect("app.db")
+    cur = conn.cursor()
+
+    cur.execute(
+        "DELETE FROM managers WHERE id=?",
+        (manager_id,)
+    )
+
+    conn.commit()
+    conn.close()
+
+    return redirect("/admin/managers")
 
 # --- 承認・却下・削除 ---
 @app.route("/approve/<int:req_id>")

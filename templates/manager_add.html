@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>管理者新規登録</title>
+
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+<style>
+    .form-card {
+        max-width: 650px;
+        background: #fff;
+        padding: 25px;
+        border-radius: 8px;
+        box-shadow: 0 1px 5px rgba(0,0,0,0.1);
+    }
+
+    .form-group {
+        margin-bottom: 18px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: bold;
+        font-size: 13px;
+    }
+
+    .form-group input,
+    .form-group select {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        box-sizing: border-box;
+    }
+
+    .btn-save {
+        background: #28a745;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 5px;
+        cursor: pointer;
+    }
+
+    .btn-back {
+        display: inline-block;
+        background: #6c757d;
+        color: white;
+        padding: 10px 20px;
+        border-radius: 5px;
+        text-decoration: none;
+        margin-left: 8px;
+    }
+
+    .error {
+        color: #dc3545;
+        margin-bottom: 15px;
+        font-weight: bold;
+    }
+</style>
+</head>
+
+<body>
+
+<div class="sidebar">
+    <div class="sidebar-header">TIST事務所_管理画面</div>
+
+    <ul class="sidebar-menu">
+
+        <li class="menu-category"
+            onclick="toggleSubmenu('applicant-menu', 'applicant-arrow')">
+            応募者管理
+            <span id="applicant-arrow">∨</span>
+        </li>
+
+        <ul id="applicant-menu" class="submenu-list">
+            <li>
+                <a href="/users" class="menu-item">
+                    <span class="circle-icon"></span>
+                    ユーザー
+                </a>
+            </li>
+        </ul>
+
+        <li class="menu-category"
+            onclick="toggleSubmenu('key-menu', 'key-arrow')">
+            鍵管理
+            <span id="key-arrow">∨</span>
+        </li>
+
+        <ul id="key-menu" class="submenu-list">
+            <li>
+                <a href="/admin" class="menu-item">
+                    <span class="circle-icon"></span>
+                    申請一覧
+                </a>
+            </li>
+        </ul>
+
+        <li class="menu-category"
+            onclick="toggleSubmenu('system-menu', 'system-arrow')">
+            システム管理
+            <span id="system-arrow">∨</span>
+        </li>
+
+        <ul id="system-menu" class="submenu-list">
+            <li>
+                <a href="/admin/managers" class="menu-item active">
+                    <span class="circle-icon"></span>
+                    管理者
+                </a>
+            </li>
+        </ul>
+
+    </ul>
+</div>
+
+
+<div class="main-wrapper">
+
+    <div class="navbar">
+
+        <div class="navbar-left">
+            <span class="menu-toggle">☰</span>
+
+            <span class="badge-green">
+                TIST事務所 環境管理画面
+            </span>
+        </div>
+
+        <div class="navbar-right">
+
+            <span class="badge-admin">
+                {{ session.get("role", "Administrator") }}
+            </span>
+
+            <span>
+                {{ session.get("name", "管理者") }}
+            </span>
+
+            <a href="/logout" class="logout-btn">
+                ログアウト
+            </a>
+
+        </div>
+
+    </div>
+
+
+    <div class="content">
+
+        <h2 class="page-title">
+            管理者新規登録
+        </h2>
+
+        <div class="form-card">
+
+            {% if error %}
+                <div class="error">
+                    {{ error }}
+                </div>
+            {% endif %}
+
+            <form method="post">
+
+                <div class="form-group">
+                    <label>ユーザー名</label>
+
+                    <input
+                        type="text"
+                        name="username"
+                        required
+                    >
+                </div>
+
+
+                <div class="form-group">
+                    <label>パスワード</label>
+
+                    <input
+                        type="password"
+                        name="password"
+                        required
+                    >
+                </div>
+
+
+                <div class="form-group">
+                    <label>氏名</label>
+
+                    <input
+                        type="text"
+                        name="name"
+                        required
+                    >
+                </div>
+
+
+                <div class="form-group">
+                    <label>メールアドレス</label>
+
+                    <input
+                        type="email"
+                        name="email"
+                    >
+                </div>
+
+
+                <div class="form-group">
+                    <label>役割名</label>
+
+                    <select name="role">
+
+                        <option value="Administrator">
+                            Administrator
+                        </option>
+
+                        <option value="Operator">
+                            Operator
+                        </option>
+
+                    </select>
+                </div>
+
+
+                <div class="form-group">
+                    <label>状態</label>
+
+                    <select name="status">
+
+                        <option value="有効">
+                            有効
+                        </option>
+
+                        <option value="無効">
+                            無効
+                        </option>
+
+                    </select>
+                </div>
+
+
+                <button
+                    type="submit"
+                    class="btn-save">
+                    登録
+                </button>
+
+
+                <a
+                    href="/admin/managers"
+                    class="btn-back">
+                    戻る
+                </a>
+
+            </form>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+</body>
+</html>

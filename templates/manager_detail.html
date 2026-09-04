@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>管理者詳細</title>
+
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+<style>
+    .detail-card {
+        max-width: 750px;
+        background: #fff;
+        padding: 25px;
+        border-radius: 8px;
+        box-shadow: 0 1px 5px rgba(0,0,0,0.1);
+    }
+
+    .detail-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 20px;
+    }
+
+    .detail-table th,
+    .detail-table td {
+        padding: 12px;
+        border-bottom: 1px solid #dee2e6;
+        text-align: left;
+    }
+
+    .detail-table th {
+        width: 180px;
+        background: #f8f9fa;
+    }
+
+    .status-active {
+        display: inline-block;
+        padding: 4px 9px;
+        border-radius: 4px;
+        background: #007bff;
+        color: white;
+    }
+
+    .status-disabled {
+        display: inline-block;
+        padding: 4px 9px;
+        border-radius: 4px;
+        background: #6c757d;
+        color: white;
+    }
+
+    .btn-edit {
+        display: inline-block;
+        background: #28a745;
+        color: white;
+        padding: 9px 18px;
+        border-radius: 5px;
+        text-decoration: none;
+    }
+
+    .btn-back {
+        display: inline-block;
+        background: #6c757d;
+        color: white;
+        padding: 9px 18px;
+        border-radius: 5px;
+        text-decoration: none;
+        margin-left: 8px;
+    }
+</style>
+
+</head>
+
+<body>
+
+<div class="sidebar">
+
+    <div class="sidebar-header">
+        TIST事務所_管理画面
+    </div>
+
+
+    <ul class="sidebar-menu">
+
+        <li
+            class="menu-category"
+            onclick="toggleSubmenu('applicant-menu', 'applicant-arrow')"
+        >
+
+            応募者管理
+            <span id="applicant-arrow">∨</span>
+
+        </li>
+
+
+        <ul
+            id="applicant-menu"
+            class="submenu-list"
+        >
+
+            <li>
+
+                <a
+                    href="/users"
+                    class="menu-item"
+                >
+
+                    <span class="circle-icon"></span>
+                    ユーザー
+
+                </a>
+
+            </li>
+
+        </ul>
+
+
+        <li
+            class="menu-category"
+            onclick="toggleSubmenu('key-menu', 'key-arrow')"
+        >
+
+            鍵管理
+            <span id="key-arrow">∨</span>
+
+        </li>
+
+
+        <ul
+            id="key-menu"
+            class="submenu-list"
+        >
+
+            <li>
+
+                <a
+                    href="/admin"
+                    class="menu-item"
+                >
+
+                    <span class="circle-icon"></span>
+                    申請一覧
+
+                </a>
+
+            </li>
+
+        </ul>
+
+
+        <li
+            class="menu-category"
+            onclick="toggleSubmenu('system-menu', 'system-arrow')"
+        >
+
+            システム管理
+            <span id="system-arrow">∨</span>
+
+        </li>
+
+
+        <ul
+            id="system-menu"
+            class="submenu-list"
+        >
+
+            <li>
+
+                <a
+                    href="/admin/managers"
+                    class="menu-item active"
+                >
+
+                    <span class="circle-icon"></span>
+                    管理者
+
+                </a>
+
+            </li>
+
+        </ul>
+
+    </ul>
+
+</div>
+
+
+<div class="main-wrapper">
+
+    <div class="navbar">
+
+        <div class="navbar-left">
+
+            <span class="menu-toggle">
+                ☰
+            </span>
+
+
+            <span class="badge-green">
+                TIST事務所 環境管理画面
+            </span>
+
+        </div>
+
+
+        <div class="navbar-right">
+
+            <span class="badge-admin">
+                {{ session.get("role", "Administrator") }}
+            </span>
+
+
+            <span>
+                {{ session.get("name", "管理者") }}
+            </span>
+
+
+            <a
+                href="/logout"
+                class="logout-btn"
+            >
+                ログアウト
+            </a>
+
+        </div>
+
+    </div>
+
+
+    <div class="content">
+
+        <h2 class="page-title">
+            管理者詳細
+        </h2>
+
+
+        <div class="detail-card">
+
+            <table class="detail-table">
+
+                <tr>
+                    <th>ID</th>
+                    <td>
+                        {{ manager.id }}
+                    </td>
+                </tr>
+
+
+                <tr>
+                    <th>ユーザー名</th>
+                    <td>
+                        {{ manager.username }}
+                    </td>
+                </tr>
+
+
+                <tr>
+                    <th>氏名</th>
+                    <td>
+                        {{ manager.name }}
+                    </td>
+                </tr>
+
+
+                <tr>
+                    <th>メールアドレス</th>
+                    <td>
+                        {{ manager.email or '-' }}
+                    </td>
+                </tr>
+
+
+                <tr>
+                    <th>役割名</th>
+                    <td>
+                        {{ manager.role }}
+                    </td>
+                </tr>
+
+
+                <tr>
+                    <th>状態</th>
+                    <td>
+
+                        {% if manager.status == '有効' %}
+
+                            <span class="status-active">
+                                有効
+                            </span>
+
+                        {% else %}
+
+                            <span class="status-disabled">
+                                {{ manager.status }}
+                            </span>
+
+                        {% endif %}
+
+                    </td>
+                </tr>
+
+            </table>
+
+
+            <a
+                href="/admin/managers/{{ manager.id }}/edit"
+                class="btn-edit"
+            >
+                編集
+            </a>
+
+
+            <a
+                href="/admin/managers"
+                class="btn-back"
+            >
+                戻る
+            </a>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+</body>
+</html>

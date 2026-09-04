@@ -5,111 +5,341 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>管理者検索</title>
 
-<!-- Liên kết tới file style.css chung -->
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+<style>
+    .manager-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+
+    .btn-add {
+        display: inline-block;
+        padding: 8px 14px;
+        background-color: #28a745;
+        color: #fff;
+        text-decoration: none;
+        border-radius: 5px;
+        font-size: 13px;
+        font-weight: bold;
+    }
+
+    .btn-detail {
+        display: inline-block;
+        padding: 5px 10px;
+        background-color: #17a2b8;
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+        margin-right: 4px;
+    }
+
+    .btn-edit {
+        display: inline-block;
+        padding: 5px 10px;
+        background-color: #28a745;
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+        margin-right: 4px;
+    }
+
+    .btn-delete {
+        display: inline-block;
+        padding: 5px 10px;
+        background-color: #dc3545;
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+    }
+
+    .status-active {
+        display: inline-block;
+        padding: 3px 8px;
+        background-color: #007bff;
+        color: white;
+        border-radius: 4px;
+    }
+
+    .status-disabled {
+        display: inline-block;
+        padding: 3px 8px;
+        background-color: #6c757d;
+        color: white;
+        border-radius: 4px;
+    }
+</style>
 </head>
+
 <body>
 
 <!-- SIDEBAR -->
 <div class="sidebar">
     <div class="sidebar-header">TIST事務所_管理画面</div>
+
     <ul class="sidebar-menu">
-        <!-- Nhóm 応募者管理 -->
-        <li class="menu-category" onclick="toggleSubmenu('applicant-menu', 'applicant-arrow')">
-            応募者管理 <span id="applicant-arrow">∨</span>
+
+        <li class="menu-category"
+            onclick="toggleSubmenu('applicant-menu', 'applicant-arrow')">
+            応募者管理
+            <span id="applicant-arrow">∨</span>
         </li>
+
         <ul id="applicant-menu" class="submenu-list">
             <li>
                 <a href="/users" class="menu-item">
-                    <span class="circle-icon"></span> ユーザー
+                    <span class="circle-icon"></span>
+                    ユーザー
                 </a>
             </li>
         </ul>
 
-        <!-- Nhóm 鍵管理 -->
-        <li class="menu-category" onclick="toggleSubmenu('key-menu', 'key-arrow')">
-            鍵管理 <span id="key-arrow">∨</span>
+
+        <li class="menu-category"
+            onclick="toggleSubmenu('key-menu', 'key-arrow')">
+            鍵管理
+            <span id="key-arrow">∨</span>
         </li>
+
         <ul id="key-menu" class="submenu-list">
             <li>
                 <a href="/admin" class="menu-item">
-                    <span class="circle-icon"></span> 申請一覧
+                    <span class="circle-icon"></span>
+                    申請一覧
                 </a>
             </li>
         </ul>
 
-        <!-- Nhóm システム管理 -->
-        <li class="menu-category" onclick="toggleSubmenu('system-menu', 'system-arrow')">
-            システム管理 <span id="system-arrow">∨</span>
+
+        <li class="menu-category"
+            onclick="toggleSubmenu('system-menu', 'system-arrow')">
+            システム管理
+            <span id="system-arrow">∨</span>
         </li>
+
         <ul id="system-menu" class="submenu-list">
             <li>
-                <!-- Đã thêm class "active" để tab sáng lên và có chấm tròn trắng đặc -->
                 <a href="/admin/managers" class="menu-item active">
-                    <span class="circle-icon"></span> 管理者
+                    <span class="circle-icon"></span>
+                    管理者
                 </a>
             </li>
         </ul>
+
     </ul>
 </div>
 
-<!-- MAIN CONTENT -->
+
+<!-- MAIN -->
 <div class="main-wrapper">
+
     <div class="navbar">
+
         <div class="navbar-left">
             <span class="menu-toggle">☰</span>
-            <span class="badge-green">TIST事務所 環境管理画面</span>
+            <span class="badge-green">
+                TIST事務所 環境管理画面
+            </span>
         </div>
+
         <div class="navbar-right">
-            <span class="badge-admin">Administrator</span>
-            <span>管理者</span>
-            <a href="/logout" class="logout-btn">ログアウト</a>
+
+            <span class="badge-admin">
+                {{ session.get("role", "Administrator") }}
+            </span>
+
+            <span>
+                {{ session.get("name", "管理者") }}
+            </span>
+
+            <a href="/logout" class="logout-btn">
+                ログアウト
+            </a>
+
         </div>
+
     </div>
+
 
     <div class="content">
-        <h2 class="page-title">管理者検索</h2>
-        <div class="card">
-            <table style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
-                <thead>
-                    <tr style="background-color: #f8f9fa; border-bottom: 1px solid #dee2e6;">
-                        <th style="padding: 10px;">操作</th>
-                        <th style="padding: 10px;">ID</th>
-                        <th style="padding: 10px;">状態</th>
-                        <th style="padding: 10px;">氏名</th>
-                        <th style="padding: 10px;">メールアドレス</th>
-                        <th style="padding: 10px;">役割名</th>
-                        <th style="padding: 10px;">管理者編集</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for m in managers %}
-                    <tr style="border-bottom: 1px solid #dee2e6;">
-                        <td style="padding: 10px;">
-                            <a href="#" class="btn btn-approve" style="text-decoration: none; padding: 4px 10px;">詳細</a>
-                            <a href="#" class="btn btn-approve" style="text-decoration: none; padding: 4px 10px;">編集</a>
-                        </td>
-                        <td style="padding: 10px;">{{ m.id }}</td>
-                        <td style="padding: 10px;"><span class="badge-admin" style="background-color: #007bff;">{{ m.status }}</span></td>
-                        <td style="padding: 10px;">{{ m.name }}</td>
-                        <td style="padding: 10px;">{{ m.email }}</td>
-                        <td style="padding: 10px;">{{ m.role }}</td>
-                        <td style="padding: 10px;">
-                            {% if m.role == 'Administrator' %}
-                                <span class="badge-admin" style="background-color: #007bff;">有効</span>
-                            {% else %}
-                                <span class="badge-admin" style="background-color: #6c757d;">無効</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+
+        <div class="manager-toolbar">
+
+            <h2 class="page-title">
+                管理者検索
+            </h2>
+
+            <a href="/admin/managers/add"
+               class="btn-add">
+                ＋ 新規管理者追加
+            </a>
+
         </div>
+
+
+        <div class="card">
+
+            <table style="
+                width:100%;
+                border-collapse:collapse;
+                font-size:13px;
+                text-align:left;
+            ">
+
+                <thead>
+
+                    <tr style="
+                        background-color:#f8f9fa;
+                        border-bottom:1px solid #dee2e6;
+                    ">
+
+                        <th style="padding:10px;">
+                            操作
+                        </th>
+
+                        <th style="padding:10px;">
+                            ID
+                        </th>
+
+                        <th style="padding:10px;">
+                            ユーザー名
+                        </th>
+
+                        <th style="padding:10px;">
+                            状態
+                        </th>
+
+                        <th style="padding:10px;">
+                            氏名
+                        </th>
+
+                        <th style="padding:10px;">
+                            メールアドレス
+                        </th>
+
+                        <th style="padding:10px;">
+                            役割名
+                        </th>
+
+                    </tr>
+
+                </thead>
+
+
+                <tbody>
+
+                {% for m in managers %}
+
+                    <tr style="
+                        border-bottom:1px solid #dee2e6;
+                    ">
+
+                        <td style="padding:10px; white-space:nowrap;">
+
+                            <a
+                                href="/admin/managers/{{ m.id }}"
+                                class="btn-detail">
+                                詳細
+                            </a>
+
+                            <a
+                                href="/admin/managers/{{ m.id }}/edit"
+                                class="btn-edit">
+                                編集
+                            </a>
+
+                            <a
+                                href="/admin/managers/{{ m.id }}/delete"
+                                class="btn-delete"
+                                onclick="
+                                    return confirm(
+                                        'この管理者を削除しますか？'
+                                    );
+                                ">
+                                削除
+                            </a>
+
+                        </td>
+
+
+                        <td style="padding:10px;">
+                            {{ m.id }}
+                        </td>
+
+
+                        <td style="padding:10px;">
+                            {{ m.username }}
+                        </td>
+
+
+                        <td style="padding:10px;">
+
+                            {% if m.status == '有効' %}
+
+                                <span class="status-active">
+                                    有効
+                                </span>
+
+                            {% else %}
+
+                                <span class="status-disabled">
+                                    {{ m.status }}
+                                </span>
+
+                            {% endif %}
+
+                        </td>
+
+
+                        <td style="padding:10px;">
+                            {{ m.name }}
+                        </td>
+
+
+                        <td style="padding:10px;">
+                            {{ m.email }}
+                        </td>
+
+
+                        <td style="padding:10px;">
+                            {{ m.role }}
+                        </td>
+
+                    </tr>
+
+
+                {% else %}
+
+                    <tr>
+
+                        <td
+                            colspan="7"
+                            style="
+                                padding:25px;
+                                text-align:center;
+                                color:#888;
+                            "
+                        >
+                            管理者データがありません。
+                        </td>
+
+                    </tr>
+
+                {% endfor %}
+
+                </tbody>
+
+            </table>
+
+        </div>
+
     </div>
+
 </div>
 
-<!-- Liên kết tới file main.js chung -->
+
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 
 </body>
