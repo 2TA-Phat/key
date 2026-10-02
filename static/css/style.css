@@ -247,3 +247,132 @@ body {
 
 .status-approved { color: #28a745; font-weight: bold; }
 .status-rejected { color: #dc3545; font-weight: bold; }
+
+/* ===== REQUEST TABLE ===== */
+
+.table-wrap {
+    width: 100%;
+    background: #ffffff;
+    border: 1px solid #dcdfe3;
+    border-radius: 4px;
+    overflow-x: auto;
+}
+
+.request-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.request-table th {
+    background-color: #f8f9fa;
+    padding: 11px 10px;
+    border-bottom: 1px solid #dee2e6;
+
+    /* Căn giữa tên cột */
+    text-align: center;
+    vertical-align: middle;
+
+    white-space: nowrap;
+    font-weight: bold;
+}
+
+.request-table td {
+    padding: 11px 10px;
+    border-bottom: 1px solid #dee2e6;
+
+    /* Căn giữa dữ liệu */
+    text-align: center;
+    vertical-align: middle;
+
+    white-space: nowrap;
+}
+
+.request-table tbody tr:nth-child(even) {
+    background-color: #f7f7f7;
+}
+
+.request-table tbody tr:hover {
+    background-color: #f1f5f9;
+}
+
+
+/* ===== STATUS ===== */
+
+.status-pending {
+    display: inline-block;
+    padding: 4px 9px;
+    border-radius: 4px;
+    background-color: #ffc107;
+    color: #333;
+    font-weight: bold;
+}
+
+.status-complete {
+    display: inline-block;
+    padding: 4px 9px;
+    border-radius: 4px;
+    background-color: #28a745;
+    color: #ffffff;
+    font-weight: bold;
+}
+
+
+/* ===== ACTION BUTTONS ===== */
+
+.action-buttons {
+    display: flex;
+
+    /* Căn giữa các nút trong cột 操作 */
+    justify-content: center;
+    align-items: center;
+
+    gap: 5px;
+}
+
+.btn-approve,
+.btn-reject,
+.btn-delete {
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 4px;
+    color: #ffffff;
+    text-decoration: none;
+    font-size: 12px;
+    border: none;
+    cursor: pointer;
+}
+
+.btn-approve {
+    background-color: #28a745;
+}
+
+.btn-reject {
+    background-color: #dc3545;
+}
+
+.btn-delete {
+    background-color: #6c757d;
+}
+
+.btn-approve:hover,
+.btn-reject:hover,
+.btn-delete:hover {
+    opacity: 0.85;
+}
+
+
+/* Cột 操作 */
+.request-table th:last-child,
+.request-table td:last-child {
+    text-align: center;
+    width: 200px;
+}
+
+
+/* Khi không có dữ liệu */
+.empty-row {
+    text-align: center !important;
+    padding: 25px !important;
+    color: #777;
+}

@@ -1,6 +1,8 @@
 import sqlite3
 from flask import Flask, request, redirect, render_template, session, url_for
 from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
+
 
 app = Flask(__name__)
 app.secret_key = "super_secret_key"
@@ -72,14 +74,13 @@ def login():
             SELECT *
             FROM managers
             WHERE username = ?
-              AND password = ?
               AND status = '有効'
-        """, (username, password))
+        """, (username,))
 
         manager = cur.fetchone()
         conn.close()
 
-        if manager:
+        if manager and check_password_hash(manager["password"], password):
             session["logged_in"] = True
             session["manager_id"] = manager["id"]
             session["username"] = manager["username"]
@@ -94,7 +95,6 @@ def login():
         )
 
     return render_template("login.html")
-
 @app.route("/logout")
 def logout():
     session.pop("logged_in", None)

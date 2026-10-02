@@ -1,106 +1,327 @@
-<!DOCTYPE html>
+<!doctype html>
+
 <html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TIST事務所 環境管理画面</title>
+  <head>
+    <meta charset="UTF-8" />
 
-<!-- Liên kết đúng file CSS bạn đã tạo -->
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-<body>
+    <title>TIST事務所 環境管理画面</title>
 
-<!-- SIDEBAR -->
-<div class="sidebar">
-    <div class="sidebar-header">TIST事務所_管理画面</div>
-    <ul class="sidebar-menu">
-        <li class="menu-category" onclick="toggleSubmenu('applicant-menu', 'applicant-arrow')">
-            応募者管理 <span id="applicant-arrow">∨</span>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+
+    <style>
+      .table-wrap {
+        width: 100%;
+        background: #fff;
+        border: 1px solid #dcdfe3;
+        border-radius: 4px;
+        overflow-x: auto;
+      }
+
+      .request-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: auto;
+        font-size: 13px;
+      }
+
+      .request-table th,
+      .request-table td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #dee2e6;
+        text-align: left;
+        vertical-align: middle;
+        white-space: nowrap;
+      }
+
+      .request-table th {
+        background-color: #f8f9fa;
+        font-weight: bold;
+      }
+
+      .request-table tbody tr:nth-child(even) {
+        background: #f7f7f7;
+      }
+
+      .request-table tbody tr:hover {
+        background: #f1f5f9;
+      }
+
+      .request-table th:first-child,
+      .request-table td:first-child {
+        width: 50px;
+      }
+
+      .status-pending {
+        display: inline-block;
+        padding: 4px 9px;
+        border-radius: 4px;
+        background: #ffc107;
+        color: #333;
+        font-weight: bold;
+      }
+
+      .status-complete {
+        display: inline-block;
+        padding: 4px 9px;
+        border-radius: 4px;
+        background: #28a745;
+        color: #fff;
+        font-weight: bold;
+      }
+
+      .action-buttons {
+        display: flex;
+        justify-content: flex-start;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .btn-approve,
+      .btn-reject {
+        display: inline-block;
+        padding: 5px 10px;
+        border-radius: 4px;
+        color: white;
+        text-decoration: none;
+        font-size: 12px;
+      }
+
+      .btn-approve {
+        background: #28a745;
+      }
+
+      .btn-reject {
+        background: #dc3545;
+      }
+
+      .btn-approve:hover,
+      .btn-reject:hover {
+        opacity: 0.85;
+      }
+
+      .empty-row {
+        text-align: center !important;
+        padding: 25px !important;
+        color: #777;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- SIDEBAR -->
+
+    <div class="sidebar">
+      <div class="sidebar-header">TIST事務所_管理画面</div>
+
+      <ul class="sidebar-menu">
+        <li
+          class="menu-category"
+          onclick="toggleSubmenu('applicant-menu', 'applicant-arrow')"
+        >
+          応募者管理
+
+          <span id="applicant-arrow">∨</span>
         </li>
+
         <ul id="applicant-menu" class="submenu-list">
-            <li>
-                <a href="/users" class="menu-item">
-                    <span class="circle-icon"></span> ユーザー
-                </a>
-            </li>
+          <li>
+            <a href="/users" class="menu-item">
+              <span class="circle-icon"></span>
+
+              ユーザー
+            </a>
+          </li>
         </ul>
 
-        <li class="menu-category" onclick="toggleSubmenu('key-menu', 'key-arrow')">
-            鍵管理 <span id="key-arrow">∨</span>
+        <li
+          class="menu-category"
+          onclick="toggleSubmenu('key-menu', 'key-arrow')"
+        >
+          鍵管理
+
+          <span id="key-arrow">∨</span>
         </li>
+
         <ul id="key-menu" class="submenu-list">
-            <li>
-                <a href="/admin" class="menu-item active">
-                    <span class="circle-icon"></span> 申請一覧
-                </a>
-            </li>
+          <li>
+            <a href="/admin" class="menu-item active">
+              <span class="circle-icon"></span>
+
+              申請一覧
+            </a>
+          </li>
         </ul>
 
-        <li class="menu-category" onclick="toggleSubmenu('system-menu', 'system-arrow')">
-            システム管理 <span id="system-arrow">∨</span>
+        <li
+          class="menu-category"
+          onclick="toggleSubmenu('system-menu', 'system-arrow')"
+        >
+          システム管理
+
+          <span id="system-arrow">∨</span>
         </li>
+
         <ul id="system-menu" class="submenu-list">
-            <li>
-                <a href="/admin/managers" class="menu-item">
-                    <span class="circle-icon"></span> 管理者
-                </a>
-            </li>
+          <li>
+            <a href="/admin/managers" class="menu-item">
+              <span class="circle-icon"></span>
+
+              管理者
+            </a>
+          </li>
         </ul>
-    </ul>
-</div>
+      </ul>
+    </div>
 
-<!-- MAIN CONTENT WRAPPER -->
-<div class="main-wrapper">
-    <div class="navbar">
+    <!-- MAIN -->
+
+    <div class="main-wrapper">
+      <!-- NAVBAR -->
+
+      <div class="navbar">
         <div class="navbar-left">
-            <span class="menu-toggle">☰</span>
-            <span class="badge-green">TIST事務所 環境管理画面</span>
+          <span class="menu-toggle"> ☰ </span>
+
+          <span class="badge-green"> TIST事務所 環境管理画面 </span>
         </div>
+
         <div class="navbar-right">
-            <span class="badge-admin">Administrator</span>
-            <span>管理者</span>
-            <a href="/logout" class="logout-btn">ログアウト</a>
+          <span class="badge-admin"> {{ session.get("role", "") }} </span>
+
+          <span> {{ session.get("name", "") }} </span>
+
+          <a href="/logout" class="logout-btn"> ログアウト </a>
         </div>
+      </div>
+
+      <!-- CONTENT -->
+
+      <div class="content">
+        <h2 class="page-title">申請一覧</h2>
+
+        <div class="table-wrap">
+          <table class="request-table">
+            <thead>
+              <tr>
+                <th>No</th>
+
+                <th>申請日時</th>
+
+                <th>教室</th>
+
+                <th>名前</th>
+
+                <th>学籍番号</th>
+
+                <th>学科</th>
+
+                <th>コース</th>
+
+                <th>クラス</th>
+
+                <th>出席番号</th>
+
+                <th>ステータス</th>
+
+                <th>操作</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              <!-- 未処理 -->
+
+              {% for item in pending %}
+
+              <tr>
+                <td>{{ loop.index }}</td>
+
+                <td>{{ item.time }}</td>
+
+                <td>{{ item.key }} （{{ item.action }}）</td>
+
+                <td>{{ item.name }}</td>
+
+                <td>{{ item.student_id }}</td>
+
+                <td>{{ item.department }}</td>
+
+                <td>{{ item.course }}</td>
+
+                <td>{{ item.class }}</td>
+
+                <td>{{ item.number }}</td>
+
+                <td>
+                  <span class="status-pending"> 未処理 </span>
+                </td>
+
+                <td>
+                  <div class="action-buttons">
+                    <a href="/approve/{{ item.id }}" class="btn-approve">
+                      承認
+                    </a>
+
+                    <a href="/reject/{{ item.id }}" class="btn-reject">
+                      却下
+                    </a>
+                  </div>
+                </td>
+              </tr>
+
+              {% endfor %}
+
+              <!-- 処理済み -->
+
+              {% for item in done %}
+
+              <tr>
+                <td>{{ pending|length + loop.index }}</td>
+
+                <td>{{ item.time }}</td>
+
+                <td>{{ item.key }} （{{ item.action }}）</td>
+
+                <td>{{ item.name }}</td>
+
+                <td>{{ item.student_id }}</td>
+
+                <td>{{ item.department }}</td>
+
+                <td>{{ item.course }}</td>
+
+                <td>{{ item.class }}</td>
+
+                <td>{{ item.number }}</td>
+
+                <td>
+                  <span class="status-complete"> 完成 </span>
+                </td>
+
+                <td></td>
+              </tr>
+
+              {% endfor %}
+
+              <!-- NO DATA -->
+
+              {% if not pending and not done %}
+
+              <tr>
+                <td colspan="11" class="empty-row">データがありません。</td>
+              </tr>
+
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
-    <div class="content">
-        <h2 class="page-title">ダッシュボード (鍵管理)</h2>
-
-        <!-- UNPROCESSED SECTION -->
-        <div id="pending-section">
-            <h3 style="font-size: 16px; margin-bottom: 10px; color: #444;">未処理（Pending）</h3>
-            <div id="pending-top" class="pagination"></div>
-            <div id="pending-list"></div>
-            <div id="pending-bottom" class="pagination"></div>
-        </div>
-
-        <hr style="margin: 30px 0; border: 0; border-top: 1px solid #dee2e6;">
-
-        <!-- PROCESSED SECTION -->
-        <div id="done-section">
-            <h3 style="font-size: 16px; margin-bottom: 10px; color: #444;">操作済み（Done）</h3>
-            <div id="done-top" class="pagination"></div>
-            <div id="done-list"></div>
-            <div id="done-bottom" class="pagination"></div>
-        </div>
-    </div>
-</div>
-
-<!-- 1. Lấy dữ liệu từ Flask gán vào biến JS -->
-<script>
-    const pending = {{ pending | tojson }};
-    const done = {{ done | tojson }};
-</script>
-
-<!-- 2. Nhúng đúng file JS bạn đã tạo -->
-<script src="{{ url_for('static', filename='js/main.js') }}"></script>
-
-<!-- 3. Gọi các hàm vẽ giao diện -->
-<script>
-    renderPending();
-    renderDone();
-</script>
-
-</body>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+  </body>
 </html>

@@ -1,125 +1,388 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TIST事務所 環境管理画面 - ユーザー検索</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-<!-- Liên kết tới file CSS chung -->
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
+    <title>TIST事務所 環境管理画面 - ユーザー検索</title>
 
-<body>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
 
-<!-- SIDEBAR -->
-<div class="sidebar">
-    <div class="sidebar-header">TIST事務所_管理画面</div>
-    <ul class="sidebar-menu">
-        <li class="menu-category" onclick="toggleSubmenu('applicant-menu', 'applicant-arrow')">
-            応募者管理 <span id="applicant-arrow">∨</span>
+    <style>
+      /* ===== FILTER ===== */
+
+      .toolbar {
+        background: #ffffff;
+        border-top: 2px solid #168bd2;
+        border-bottom: 1px solid #dee2e6;
+        margin-bottom: 20px;
+      }
+
+      .filter-header {
+        padding: 10px 15px;
+        border-bottom: 1px solid #dee2e6;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .filter-btn {
+        background: #17a2b8;
+        color: #fff;
+        border: none;
+        padding: 6px 12px;
+        border-radius: 4px;
+        font-weight: bold;
+        cursor: pointer;
+      }
+
+      .summary-box {
+        display: flex;
+        gap: 20px;
+        font-size: 13px;
+      }
+
+      .filter-content {
+        padding: 20px 30px 25px;
+      }
+
+      .filter-row {
+        display: flex;
+        align-items: center;
+        margin-bottom: 15px;
+        gap: 12px;
+      }
+
+      .filter-row label {
+        width: 150px;
+        font-weight: bold;
+        text-align: right;
+        font-size: 13px;
+      }
+
+      .filter-row input {
+        height: 35px;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+        padding: 5px 10px;
+        font-size: 13px;
+      }
+
+      .date-input {
+        width: 280px;
+      }
+
+      .contact-input {
+        width: 580px;
+      }
+
+      .filter-separator {
+        padding: 0 5px;
+      }
+
+      .filter-button-row {
+        text-align: center;
+        margin-top: 25px;
+      }
+
+      .btn-filter-submit {
+        width: 360px;
+        padding: 8px;
+        background: #747d84;
+        color: #fff;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        font-weight: bold;
+      }
+
+      .btn-filter-submit:hover {
+        opacity: 0.9;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- SIDEBAR -->
+
+    <div class="sidebar">
+      <div class="sidebar-header">TIST事務所_管理画面</div>
+
+      <ul class="sidebar-menu">
+        <li
+          class="menu-category"
+          onclick="toggleSubmenu('applicant-menu', 'applicant-arrow')"
+        >
+          応募者管理
+
+          <span id="applicant-arrow">∨</span>
         </li>
+
         <ul id="applicant-menu" class="submenu-list">
-            <li>
-                <!-- Class active ở tab ユーザー -->
-                <a href="/users" class="menu-item active">
-                    <span class="circle-icon"></span> ユーザー
-                </a>
-            </li>
+          <li>
+            <a href="/users" class="menu-item active">
+              <span class="circle-icon"></span>
+
+              ユーザー
+            </a>
+          </li>
         </ul>
 
-        <li class="menu-category" onclick="toggleSubmenu('key-menu', 'key-arrow')">
-            鍵管理 <span id="key-arrow">∨</span>
+        <li
+          class="menu-category"
+          onclick="toggleSubmenu('key-menu', 'key-arrow')"
+        >
+          鍵管理
+
+          <span id="key-arrow">∨</span>
         </li>
+
         <ul id="key-menu" class="submenu-list">
-            <li>
-                <a href="/admin" class="menu-item">
-                    <span class="circle-icon"></span> 申請一覧
-                </a>
-            </li>
+          <li>
+            <a href="/admin" class="menu-item">
+              <span class="circle-icon"></span>
+
+              申請一覧
+            </a>
+          </li>
         </ul>
 
-        <li class="menu-category" onclick="toggleSubmenu('system-menu', 'system-arrow')">
-            システム管理 <span id="system-arrow">∨</span>
+        <li
+          class="menu-category"
+          onclick="toggleSubmenu('system-menu', 'system-arrow')"
+        >
+          システム管理
+
+          <span id="system-arrow">∨</span>
         </li>
-        <ul id="system-menu" class="submenu-list">
-            <li>
-                <a href="/admin/managers" class="menu-item">
-                    <span class="circle-icon"></span> 管理者
-                </a>
-            </li>
-        </ul>
-    </ul>
-</div>
 
-<!-- MAIN CONTENT -->
-<div class="main-wrapper">
-    <div class="navbar">
-        <div class="navbar-left">
-            <span class="menu-toggle">☰</span>
-            <span class="badge-green">TIST事務所 環境管理画面</span>
-        </div>
-        <div class="navbar-right">
-            <span class="badge-admin">Administrator</span>
-            <span>管理者</span>
-            <a href="/logout" class="logout-btn">ログアウト</a>
-        </div>
+        <ul id="system-menu" class="submenu-list">
+          <li>
+            <a href="/admin/managers" class="menu-item">
+              <span class="circle-icon"></span>
+
+              管理者
+            </a>
+          </li>
+        </ul>
+      </ul>
     </div>
 
-    <div class="content">
+    <!-- MAIN CONTENT -->
+
+    <div class="main-wrapper">
+      <!-- NAVBAR -->
+
+      <div class="navbar">
+        <div class="navbar-left">
+          <span class="menu-toggle"> ☰ </span>
+
+          <span class="badge-green"> TIST事務所 環境管理画面 </span>
+        </div>
+
+        <div class="navbar-right">
+          <span class="badge-admin"> {{ session.get("role", "") }} </span>
+
+          <span> {{ session.get("name", "") }} </span>
+
+          <a href="/logout" class="logout-btn"> ログアウト </a>
+        </div>
+      </div>
+
+      <!-- CONTENT -->
+
+      <div class="content">
         <h2 class="page-title">ユーザー検索</h2>
 
+        <!-- FILTER -->
+
         <div class="toolbar">
-            <button class="filter-btn">フィルタ ▼</button>
+          <div class="filter-header">
+            <button type="button" class="filter-btn" onclick="toggleFilter()">
+              フィルタ ▼
+            </button>
+
             <div class="summary-box">
-                <div class="summary-item">未処理件数: <span style="color: #d9534f;">{{ total_pending }}</span> 件</div>
-                <div class="summary-item">完了件数: <span style="color: #5cb85c;">{{ total_done }}</span> 件</div>
-                <div class="summary-item">該当件数: <span>{{ total_users }}</span> 件</div>
+              <div class="summary-item">
+                未処理件数:
+
+                <span style="color: #d9534f"> {{ total_pending }} </span>
+
+                件
+              </div>
+
+              <div class="summary-item">
+                完了件数:
+
+                <span style="color: #5cb85c"> {{ total_done }} </span>
+
+                件
+              </div>
+
+              <div class="summary-item">
+                該当件数:
+
+                <span> {{ total_users }} </span>
+
+                件
+              </div>
             </div>
+          </div>
+
+          <div id="filter-content" class="filter-content">
+            <form method="get" action="/users">
+              <!-- PERIOD -->
+
+              <div class="filter-row">
+                <label> 期間 </label>
+
+                <input
+                  type="date"
+                  class="date-input"
+                  name="date_from"
+                  value="{{ request.args.get('date_from', '') }}"
+                />
+
+                <span class="filter-separator"> ～ </span>
+
+                <input
+                  type="date"
+                  class="date-input"
+                  name="date_to"
+                  value="{{ request.args.get('date_to', '') }}"
+                />
+              </div>
+
+              <!-- CONTACT ID -->
+
+              <div class="filter-row">
+                <label> 学籍番号 </label>
+
+                <input
+                  type="text"
+                  class="contact-input"
+                  name="contact_id"
+                  value="{{ request.args.get('contact_id', '') }}"
+                  placeholder="学籍番号を入力"
+                />
+              </div>
+
+              <!-- BUTTON -->
+
+              <div class="filter-button-row">
+                <button type="submit" class="btn-filter-submit">
+                  絞り込み条件を反映する
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
 
-        <div class="card" style="padding: 0; overflow-x: auto;">
-            <table style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
-                <thead>
-                    <tr style="background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;">
-                        <th style="padding: 12px;">お問い合わせID</th>
-                        <th style="padding: 12px;">初回出現日時</th>
-                        <th style="padding: 12px;">最終ログイン日時</th>
-                        <th style="padding: 12px;">処理状況</th>
-                        <th style="padding: 12px;">未処理数</th>
-                        <th style="padding: 12px;">完了数</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for user in users %}
-                    <tr style="border-bottom: 1px solid #dee2e6;">
-                        <td style="padding: 10px 12px;">{{ user.contact_id }}</td>
-                        <td style="padding: 10px 12px;">{{ user.first_login if user.first_login else '-' }}</td>
-                        <td style="padding: 10px 12px;">{{ user.last_login if user.last_login else '-' }}</td>
-                        <td style="padding: 10px 12px;">
-                            {% if user.process_status == '未処理' %}
-                                <span class="badge-admin" style="background-color: #ffc107; color: #212529;">未処理</span>
-                            {% else %}
-                                <span class="badge-admin" style="background-color: #28a745;">完了</span>
-                            {% endif %}
-                        </td>
-                        <td style="padding: 10px 12px;">{{ user.pending_count or 0 }}</td>
-                        <td style="padding: 10px 12px;">{{ user.done_count or 0 }}</td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="6" style="text-align: center; color: #888; padding: 20px;">
-                            データが存在しません。
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        <!-- TABLE -->
+
+        <div class="card" style="padding: 0; overflow-x: auto">
+          <table
+            style="
+              width: 100%;
+              border-collapse: collapse;
+              font-size: 13px;
+              text-align: left;
+            "
+          >
+            <thead>
+              <tr
+                style="
+                  background-color: #f8f9fa;
+                  border-bottom: 2px solid #dee2e6;
+                "
+              >
+                <th style="padding: 12px">学籍番号</th>
+
+                <th style="padding: 12px">初回出現日時</th>
+
+                <th style="padding: 12px">最終ログイン日時</th>
+
+                <th style="padding: 12px">処理状況</th>
+
+                <th style="padding: 12px">未処理数</th>
+
+                <th style="padding: 12px">完了数</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {% for user in users %}
+
+              <tr style="border-bottom: 1px solid #dee2e6">
+                <td style="padding: 10px 12px">{{ user.contact_id }}</td>
+
+                <td style="padding: 10px 12px">
+                  {{ user.first_login if user.first_login else '-' }}
+                </td>
+
+                <td style="padding: 10px 12px">
+                  {{ user.last_login if user.last_login else '-' }}
+                </td>
+
+                <td style="padding: 10px 12px">
+                  {% if user.process_status == '未処理' %}
+
+                  <span
+                    class="badge-admin"
+                    style="background-color: #ffc107; color: #212529"
+                  >
+                    未処理
+                  </span>
+
+                  {% else %}
+
+                  <span class="badge-admin" style="background-color: #28a745">
+                    完了
+                  </span>
+
+                  {% endif %}
+                </td>
+
+                <td style="padding: 10px 12px">
+                  {{ user.pending_count or 0 }}
+                </td>
+
+                <td style="padding: 10px 12px">{{ user.done_count or 0 }}</td>
+              </tr>
+
+              {% else %}
+
+              <tr>
+                <td
+                  colspan="6"
+                  style="text-align: center; color: #888; padding: 20px"
+                >
+                  データが存在しません。
+                </td>
+              </tr>
+
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
+      </div>
     </div>
-</div>
 
-<!-- Liên kết tới file JS chung -->
-<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 
-</body>
+    <script>
+      function toggleFilter() {
+        const filter = document.getElementById("filter-content");
+
+        if (filter.style.display === "none") {
+          filter.style.display = "block";
+        } else {
+          filter.style.display = "none";
+        }
+      }
+    </script>
+  </body>
 </html>
