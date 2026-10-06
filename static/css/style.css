@@ -376,3 +376,473 @@ body {
     padding: 25px !important;
     color: #777;
 }
+
+/* Container chứa các nút filter */
+.filter-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+/* Nút tìm kiếm khi SÁNG (Active) */
+.btn-filter-submit {
+    padding: 8px 25px;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: bold;
+    color: #ffffff;
+    background-color: #007bff !important; /* Màu xanh sáng khi có text */
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+/* Nút tìm kiếm khi TỐI/KHOÁ (Disabled) */
+.btn-filter-submit:disabled {
+    background-color: #6c757d !important; /* Màu xám như trong hình của bạn */
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+/* Nút クリア */
+.btn-filter-clear {
+    padding: 8px 18px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 13px;
+    background-color: #ffffff;
+    color: #495057;
+    cursor: pointer;
+}
+
+.btn-filter-clear:hover {
+    background-color: #e2e6ea;
+}
+
+/* Toolbar wrapper */
+/* Styling chung cho Toolbar */
+.toolbar {
+    background: #ffffff;
+    border-top: 3px solid #168bd2;
+    border-bottom: 1px solid #dee2e6;
+    margin-bottom: 20px;
+}
+
+.filter-header {
+    padding: 10px 15px;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.filter-btn-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+/* Nút フィルタ (Ẩn/Hiện khung search) */
+.btn-text-only {
+    background-color: #17a2b8;
+    color: #ffffff;
+    border: none;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: bold;
+    border-top-left-radius: 3px;
+    border-bottom-left-radius: 3px;
+    cursor: pointer;
+}
+
+.btn-text-only:hover {
+    background-color: #138496;
+}
+
+/* Nút ▼ (Mở menu Clear) */
+.btn-arrow-only {
+    background-color: #007bff;
+    color: #ffffff;
+    border: none;
+    padding: 6px 10px;
+    font-size: 10px;
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+    cursor: pointer;
+    border-left: 1px solid rgba(255,255,255,0.2);
+}
+
+.btn-arrow-only:hover {
+    background-color: #0069d9;
+}
+
+/* Dropdown Popup chứa nút Clear */
+.filter-dropdown-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 5px;
+    background: #ffffff;
+    border: 1px solid #ced4da;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+    border-radius: 4px;
+    z-index: 100;
+    padding: 4px 0;
+    width: 170px;
+}
+
+.dropdown-item-clear {
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 8px 12px;
+    text-align: left;
+    font-size: 12px;
+    color: #333333;
+    cursor: pointer;
+}
+
+.dropdown-item-clear:hover {
+    background-color: #f8f9fa;
+}
+
+/* --- CẤU TRÚC KÉO DÀI CÁC Ô INPUT --- */
+.filter-content {
+    padding: 20px;
+}
+
+.filter-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.filter-label {
+    width: 120px;
+    font-weight: bold;
+    font-size: 14px;
+    color: #333;
+    text-align: right;
+    padding-right: 20px;
+}
+
+.filter-inputs-group {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    max-width: 900px; /* Kéo dài tối đa khung input giống mẫu */
+}
+
+/* Kéo dài 2 ô chọn Ngày */
+.wide-input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.filter-separator {
+    margin: 0 15px;
+    color: #6c757d;
+}
+
+/* Kéo dài toàn bộ ô 学籍番号 */
+.wide-input-full {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 14px;
+    max-width: 900px;
+}
+
+/* Nút tìm kiếm căn giữa */
+.filter-button-row {
+    text-align: center;
+    margin-top: 25px;
+}
+
+.btn-filter-submit {
+    width: 360px;
+    padding: 9px 16px;
+    background-color: #007bff;
+    color: #ffffff;
+    border: none;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.btn-filter-submit:disabled {
+    background-color: #6c757d !important;
+    opacity: 0.85;
+    cursor: not-allowed;
+}
+
+.filter-header {
+    padding: 10px 15px;
+    border-bottom: 1px solid #dee2e6;
+    position: relative;
+}
+
+/* Cụm nút Filter 2 khối màu */
+.filter-btn-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+.filter-btn-group {
+    display: inline-flex;
+    align-items: center;
+    border: none;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+}
+
+.filter-btn-group .btn-text {
+    background-color: #17a2b8; /* Khối chữ xanh cyan */
+    color: #ffffff;
+    padding: 5px 12px;
+    font-size: 13px;
+    font-weight: bold;
+    border-top-left-radius: 3px;
+    border-bottom-left-radius: 3px;
+}
+
+.filter-btn-group .btn-arrow {
+    background-color: #007bff; /* Khối mũi tên xanh dương */
+    color: #ffffff;
+    padding: 5px 8px;
+    font-size: 10px;
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+}
+
+/* Menu Dropdown chứa nút Clear */
+.filter-dropdown-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 5px;
+    background: #ffffff;
+    border: 1px solid #ced4da;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.12);
+    border-radius: 4px;
+    z-index: 100;
+    padding: 5px 0;
+    width: 160px;
+}
+
+.dropdown-item-clear {
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 8px 12px;
+    text-align: left;
+    font-size: 12px;
+    color: #333333;
+    cursor: pointer;
+}
+
+.dropdown-item-clear:hover {
+    background-color: #f1f3f5;
+}
+
+/* Nút tìm kiếm căn giữa nằm phía dưới */
+.filter-button-row {
+    text-align: center;
+    margin-top: 25px;
+}
+
+.btn-filter-submit {
+    width: 360px;
+    padding: 8px 16px;
+    background-color: #007bff; /* Màu xanh khi kích hoạt */
+    color: #ffffff;
+    border: none;
+    border-radius: 3px;
+    font-weight: bold;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+/* Trạng thái bị xám (disabled) giống hệt ảnh */
+.btn-filter-submit:disabled {
+    background-color: #6c757d !important; /* Màu xám mờ */
+    opacity: 0.85;
+    cursor: not-allowed;
+}
+/* ==================== TOOLBAR & FILTER ==================== */
+
+/* Container chung của Toolbar Filter */
+.toolbar {
+    background: #ffffff;
+    border-top: 3px solid #168bd2;
+    border-bottom: 1px solid #dee2e6;
+    margin-bottom: 20px;
+}
+
+.filter-header {
+    padding: 10px 15px;
+    border-bottom: 1px solid #dee2e6;
+    position: relative;
+}
+
+/* Cụm 2 nút Filter ghép nhau */
+.filter-btn-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center; /* Căn thẳng hàng dọc */
+}
+
+/* 1. Nút フィルタ (Ẩn/Hiện khung search) */
+.btn-text-only {
+    background-color: #17a2b8;
+    color: #ffffff;
+    border: none;
+    height: 32px;               /* Khóa chiều cao cố định */
+    padding: 0 14px;            /* Chỉ dùng padding ngang */
+    display: inline-flex;
+    align-items: center;        /* Căn giữa chữ theo chiều dọc */
+    justify-content: center;
+    font-size: 13px;
+    font-weight: bold;
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+    cursor: pointer;
+    box-sizing: border-box;
+}
+
+.btn-text-only:hover {
+    background-color: #138496;
+}
+
+/* 2. Nút ▼ (Mở menu Clear) */
+.btn-arrow-only {
+    background-color: #007bff;
+    color: #ffffff;
+    border: none;
+    height: 32px;               /* Bằng chính xác chiều cao nút フィルタ */
+    padding: 0 10px;            /* Chỉ dùng padding ngang */
+    display: inline-flex;
+    align-items: center;        /* Căn giữa mũi tên theo chiều dọc */
+    justify-content: center;
+    font-size: 10px;
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+    cursor: pointer;
+    border-left: 1px solid rgba(255, 255, 255, 0.3);
+    box-sizing: border-box;
+}
+
+.btn-arrow-only:hover {
+    background-color: #0069d9;
+}
+
+/* Dropdown Popup chứa nút Clear */
+.filter-dropdown-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 5px;
+    background: #ffffff;
+    border: 1px solid #ced4da;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+    border-radius: 4px;
+    z-index: 100;
+    padding: 4px 0;
+    width: 170px;
+}
+
+.dropdown-item-clear {
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 8px 12px;
+    text-align: left;
+    font-size: 12px;
+    color: #333333;
+    cursor: pointer;
+}
+
+.dropdown-item-clear:hover {
+    background-color: #f8f9fa;
+}
+
+/* ==================== FORM SEARCH INPUTS ==================== */
+
+.filter-content {
+    padding: 20px;
+}
+
+.filter-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.filter-label {
+    width: 120px;
+    font-weight: bold;
+    font-size: 14px;
+    color: #333;
+    text-align: right;
+    padding-right: 20px;
+}
+
+.filter-inputs-group {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    max-width: 900px; /* Độ dài tối đa cho khung nhập */
+}
+
+/* Ô nhập Ngày */
+.wide-input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.filter-separator {
+    margin: 0 15px;
+    color: #6c757d;
+}
+
+/* Ô nhập 学籍番号 */
+.wide-input-full {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 14px;
+    max-width: 900px;
+}
+
+/* Nút Submit Tìm kiếm */
+.filter-button-row {
+    text-align: center;
+    margin-top: 25px;
+}
+
+.btn-filter-submit {
+    width: 360px;
+    padding: 9px 16px;
+    background-color: #007bff;
+    color: #ffffff;
+    border: none;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.btn-filter-submit:disabled {
+    background-color: #6c757d !important;
+    opacity: 0.85;
+    cursor: not-allowed;
+}

@@ -201,79 +201,90 @@
 
         <div class="toolbar">
           <div class="filter-header">
-            <button type="button" class="filter-btn" onclick="toggleFilter()">
-              フィルタ ▼
-            </button>
+            <div class="filter-btn-wrapper">
+              <!-- Nút フィルタ dùng để ẩn/hiện khung tìm kiếm -->
+              <button
+                type="button"
+                class="btn-text-only"
+                onclick="toggleFilterContent()"
+              >
+                フィルタ
+              </button>
 
-            <div class="summary-box">
-              <div class="summary-item">
-                未処理件数:
+              <!-- Nút mũi tên ▼ mở dropdown Clear -->
+              <button
+                type="button"
+                class="btn-arrow-only"
+                onclick="toggleClearDropdown(event)"
+              >
+                ▼
+              </button>
 
-                <span style="color: #d9534f"> {{ total_pending }} </span>
-
-                件
-              </div>
-
-              <div class="summary-item">
-                完了件数:
-
-                <span style="color: #5cb85c"> {{ total_done }} </span>
-
-                件
-              </div>
-
-              <div class="summary-item">
-                該当件数:
-
-                <span> {{ total_users }} </span>
-
-                件
+              <!-- Popup menu sổ xuống chứa nút Clear -->
+              <div
+                id="filter-dropdown"
+                class="filter-dropdown-menu"
+                style="display: none"
+              >
+                <button
+                  type="button"
+                  id="btn-clear"
+                  class="dropdown-item-clear"
+                >
+                  ▶ 検索条件をクリア
+                </button>
               </div>
             </div>
           </div>
 
+          <!-- Khung nội dung tìm kiếm (có thể ẩn/hiện) -->
           <div id="filter-content" class="filter-content">
             <form method="get" action="/users">
-              <!-- PERIOD -->
-
+              <!-- PERIOD (期間) -->
               <div class="filter-row">
-                <label> 期間 </label>
-
-                <input
-                  type="date"
-                  class="date-input"
-                  name="date_from"
-                  value="{{ request.args.get('date_from', '') }}"
-                />
-
-                <span class="filter-separator"> ～ </span>
-
-                <input
-                  type="date"
-                  class="date-input"
-                  name="date_to"
-                  value="{{ request.args.get('date_to', '') }}"
-                />
+                <label class="filter-label"> 期間 </label>
+                <div class="filter-inputs-group">
+                  <input
+                    type="date"
+                    id="date_from"
+                    class="date-input wide-input"
+                    name="date_from"
+                    value="{{ request.args.get('date_from', '') }}"
+                  />
+                  <span class="filter-separator"> ～ </span>
+                  <input
+                    type="date"
+                    id="date_to"
+                    class="date-input wide-input"
+                    name="date_to"
+                    value="{{ request.args.get('date_to', '') }}"
+                  />
+                </div>
               </div>
 
-              <!-- CONTACT ID -->
-
+              <!-- CONTACT ID (学籍番号) -->
               <div class="filter-row">
-                <label> 学籍番号 </label>
-
-                <input
-                  type="text"
-                  class="contact-input"
-                  name="contact_id"
-                  value="{{ request.args.get('contact_id', '') }}"
-                  placeholder="学籍番号を入力"
-                />
+                <label class="filter-label"> 学籍番号 </label>
+                <div class="filter-inputs-group">
+                  <input
+                    type="text"
+                    id="student_id"
+                    class="contact-input wide-input-full"
+                    name="contact_id"
+                    value="{{ request.args.get('contact_id', '') }}"
+                    placeholder="学籍番号を入力"
+                  />
+                </div>
               </div>
 
-              <!-- BUTTON -->
-
+              <!-- BUTTON (Căn giữa) -->
               <div class="filter-button-row">
-                <button type="submit" class="btn-filter-submit">
+                <button
+                  type="submit"
+                  id="btn-search"
+                  class="btn-filter-submit"
+                  disabled
+                >
                   絞り込み条件を反映する
                 </button>
               </div>

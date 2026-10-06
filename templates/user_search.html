@@ -1,0 +1,27 @@
+<!-- Đặt form tìm kiếm -->
+<form method="GET" action="/users" id="filter-form">
+    <div class="filter-inputs">
+        <label>期間</label>
+        <input type="date" name="date_from" id="date_from">
+        〜
+        <input type="date" name="date_to" id="date_to">
+    </div>
+
+    <div class="filter-inputs">
+        <label>学籍番号</label>
+        <!-- Thêm id="student_id" vào đây -->
+        <input type="text" name="contact_id" id="student_id" placeholder="学籍番号を入力">
+    </div>
+
+    <div class="filter-buttons">
+        <!-- Nút Tìm kiếm mặc định disabled -->
+        <button type="submit" id="btn-search" class="btn-filter-submit" disabled>
+            絞り込み条件を反映する
+        </button>
+        
+        <!-- Nút クリア -->
+        <button type="button" id="btn-clear" class="btn-filter-clear">
+            クリア
+        </button>
+    </div>
+</form>
