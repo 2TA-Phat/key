@@ -1,19 +1,22 @@
 import sqlite3
 from flask import Flask, request, redirect, render_template, session, url_for
+from rfid_api import rfid_api, initialize, issue_command, ROOMS, ACTIONS
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
-import sqlite3
-from pathlib import Path
+
 
 app = Flask(__name__)
-app.secret_key = "super_secret_key"
+import os
+app.secret_key = os.environ.get("TIST_FLASK_SECRET", "CHANGE_ME_LOCAL_DEMO_ONLY")
+app.config["DATABASE"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.db")
+app.register_blueprint(rfid_api)
 
 # Cấu hình Mặc định Tài khoản & Mật khẩu Admin
 
 
 # --- DB 初期化 ---
 def init_db():
-    conn = sqlite3.connect("app.db")
+    conn = sqlite3.connect(app.config["DATABASE"])
     cur = conn.cursor()
 
     # Bảng Học sinh
@@ -52,24 +55,18 @@ def init_db():
             status TEXT NOT NULL
         )
     """)
-    # Thêm cột source nếu chưa tồn tại
+
+
+
     cur.execute("PRAGMA table_info(requests)")
-    columns = [row[1] for row in cur.fetchall()]
-
-    if "source" not in columns:
-        cur.execute("""
-            ALTER TABLE requests
-            ADD COLUMN source TEXT NOT NULL DEFAULT 'Web申請'
-        """)
-        print("Đã thêm cột source!")
-    else:
-        print("Cột source đã tồn tại.")
-
-
+    cols = {row[1] for row in cur.fetchall()}
+    if "source" not in cols:
+        cur.execute("ALTER TABLE requests ADD COLUMN source TEXT NOT NULL DEFAULT 'Web申請'")
     conn.commit()
     conn.close()
 
 init_db()
+initialize(app.config["DATABASE"])
 
 # --- XL ĐĂNG NHẬP / ĐĂNG XUẤT ---
 @app.route("/login", methods=["GET", "POST"])
@@ -78,7 +75,7 @@ def login():
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
 
-        conn = sqlite3.connect("app.db")
+        conn = sqlite3.connect(app.config["DATABASE"])
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
@@ -127,7 +124,7 @@ def student_submit():
     action = request.form.get("action")
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    conn = sqlite3.connect("app.db")
+    conn = sqlite3.connect(app.config["DATABASE"])
     cur = conn.cursor()
 
     cur.execute("SELECT * FROM students WHERE student_id=?", (student_id,))
@@ -138,8 +135,8 @@ def student_submit():
         return render_template("student.html", error="学籍番号が登録されていません")
 
     cur.execute("""
-        INSERT INTO requests (student_id, key, action, status, time)
-        VALUES (?, ?, ?, '申請中', ?)
+        INSERT INTO requests (student_id, key, action, status, time, source)
+        VALUES (?, ?, ?, '申請中', ?, 'Web申請')
     """, (student_id, key, action, now))
 
     conn.commit()
@@ -151,7 +148,7 @@ def student_submit():
 def status():
     student_id = request.form.get("student_id")
 
-    conn = sqlite3.connect("app.db")
+    conn = sqlite3.connect(app.config["DATABASE"])
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
@@ -181,7 +178,7 @@ def register():
         request.form["number"]
     )
 
-    conn = sqlite3.connect("app.db")
+    conn = sqlite3.connect(app.config["DATABASE"])
     cur = conn.cursor()
 
     cur.execute("""
@@ -200,10 +197,9 @@ def users():
     if not session.get("logged_in"):
         return redirect("/login")
 
-    conn = sqlite3.connect("app.db")
+    conn = sqlite3.connect(app.config["DATABASE"])
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-
 
     cur.execute("""
         SELECT 
@@ -259,12 +255,12 @@ def admin():
     if not session.get("logged_in"):
         return redirect("/login")
 
-    conn = sqlite3.connect("app.db")
+    conn = sqlite3.connect(app.config["DATABASE"])
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT r.id, r.student_id, r.key, r.action, r.status, r.time,
+        SELECT r.id, r.student_id, r.key, r.action, r.status, r.time, r.source, r.execution_status,
                s.name, s.department, s.course, s.class, s.number
         FROM requests r
         LEFT JOIN students s ON r.student_id = s.student_id
@@ -274,7 +270,7 @@ def admin():
     pending_rows = cur.fetchall()
 
     cur.execute("""
-        SELECT r.id, r.student_id, r.key, r.action, r.status, r.time,
+        SELECT r.id, r.student_id, r.key, r.action, r.status, r.time, r.source, r.execution_status,
                s.name, s.department, s.course, s.class, s.number
         FROM requests r
         LEFT JOIN students s ON r.student_id = s.student_id
@@ -288,7 +284,10 @@ def admin():
     pending = [dict(row) for row in pending_rows]
     done = [dict(row) for row in done_rows]
 
-    return render_template("admin.html", pending=pending, done=done)
+    import secrets
+    if 'csrf' not in session:
+        session['csrf'] = secrets.token_hex(24)
+    return render_template("admin.html", pending=pending, done=done, csrf=session['csrf'])
 
 # --- 管理者一覧画面 (MỚI BỔ SUNG) ---
 @app.route("/admin/managers")
@@ -297,7 +296,7 @@ def admin_managers():
     if not session.get("logged_in"):
         return redirect("/login")
 
-    conn = sqlite3.connect("app.db")
+    conn = sqlite3.connect(app.config["DATABASE"])
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
@@ -331,7 +330,7 @@ def manager_add():
 
     
 
-    conn = sqlite3.connect("app.db")
+    conn = sqlite3.connect(app.config["DATABASE"])
     cur = conn.cursor()
 
     try:
@@ -341,7 +340,7 @@ def manager_add():
             VALUES (?, ?, ?, ?, ?, ?)
         """, (
             username,
-            password,
+            generate_password_hash(password),
             name,
             email,
             role,
@@ -368,7 +367,7 @@ def manager_detail(manager_id):
     if not session.get("logged_in"):
         return redirect("/login")
 
-    conn = sqlite3.connect("app.db")
+    conn = sqlite3.connect(app.config["DATABASE"])
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
@@ -396,7 +395,7 @@ def manager_edit(manager_id):
     if not session.get("logged_in"):
         return redirect("/login")
 
-    conn = sqlite3.connect("app.db")
+    conn = sqlite3.connect(app.config["DATABASE"])
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
@@ -480,7 +479,7 @@ def manager_delete(manager_id):
     if session.get("manager_id") == manager_id:
         return redirect("/admin/managers")
 
-    conn = sqlite3.connect("app.db")
+    conn = sqlite3.connect(app.config["DATABASE"])
     cur = conn.cursor()
 
     cur.execute(
@@ -494,33 +493,39 @@ def manager_delete(manager_id):
     return redirect("/admin/managers")
 
 # --- 承認・却下・削除 ---
-@app.route("/approve/<int:req_id>")
+@app.route("/approve/<int:req_id>", methods=["POST"])
 def approve(req_id):
     if not session.get("logged_in"):
         return redirect("/login")
-    conn = sqlite3.connect("app.db")
-    cur = conn.cursor()
-    cur.execute("UPDATE requests SET status='承認' WHERE id=?", (req_id,))
-    conn.commit()
-    conn.close()
-    return redirect("/admin")
+    from rfid_api import valid_csrf
+    if not valid_csrf():
+        return "Invalid CSRF", 403
+    with sqlite3.connect(app.config["DATABASE"]) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute("SELECT * FROM requests WHERE id=? AND status='申請中'",(req_id,)).fetchone()
+        if row and row['key'] in ROOMS and row['action'] in ACTIONS:
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            conn.execute("UPDATE requests SET status='承認',approved_at=?,execution_status='待機中' WHERE id=?",(now,req_id))
+            issue_command(conn,row['key'],row['action'],'teacher_approval',row['student_id'],req_id)
+    return redirect('/admin')
 
-@app.route("/reject/<int:req_id>")
+@app.route("/reject/<int:req_id>", methods=["POST"])
 def reject(req_id):
     if not session.get("logged_in"):
         return redirect("/login")
-    conn = sqlite3.connect("app.db")
-    cur = conn.cursor()
-    cur.execute("UPDATE requests SET status='却下' WHERE id=?", (req_id,))
-    conn.commit()
-    conn.close()
-    return redirect("/admin")
+    from rfid_api import valid_csrf
+    if not valid_csrf():
+        return "Invalid CSRF", 403
+    with sqlite3.connect(app.config["DATABASE"]) as conn:
+        conn.execute("UPDATE requests SET status='却下' WHERE id=? AND status='申請中'",(req_id,))
+    return redirect('/admin')
 
 @app.route("/delete/<int:req_id>")
 def delete(req_id):
     if not session.get("logged_in"):
         return redirect("/login")
-    conn = sqlite3.connect("app.db")
+    conn = sqlite3.connect(app.config["DATABASE"])
     cur = conn.cursor()
     cur.execute("DELETE FROM requests WHERE id=?", (req_id,))
     conn.commit()
@@ -529,5 +534,4 @@ def delete(req_id):
 
 # --- 起動 ---
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", debug=True)
-
+    app.run(host="0.0.0.0", port=5000, debug=False)

@@ -94,7 +94,7 @@ def as_instruction(row):
     return dict(allowed=True, command_id=row['id'], room=row['room'], action=row['action'],
                 source=row['source'], expires_at=row['expires_at'])
 
-@rfid_api.route('/admin/rfid', methods=['GET','POST'])
+@rfid_api.post('/admin/rfid/save')
 @admin_only
 def manage_cards():
     if 'csrf' not in session:
@@ -123,14 +123,15 @@ def manage_cards():
                     active=1,valid_until=excluded.valid_until''',(uid,student_id,mode,expiry))
                 con.execute('DELETE FROM rfid_permissions WHERE uid=?',(uid,))
                 con.executemany('INSERT INTO rfid_permissions(uid,room) VALUES(?,?)',[(uid,r) for r in rooms])
-            return redirect('/admin/rfid')
+            return redirect('/admin#rfid-section')
         except (ValueError,sqlite3.Error) as exc:
             error = str(exc)
     with db() as con:
         cards = [dict(c) for c in con.execute('''SELECT c.*,group_concat(p.room,', ') AS rooms
             FROM rfid_cards c LEFT JOIN rfid_permissions p ON p.uid=c.uid
             GROUP BY c.uid ORDER BY c.student_id''')]
-    return render_template('rfid_admin.html',cards=cards,rooms=ROOMS,error=error,csrf=session['csrf'])
+    session['rfid_error'] = error or '登録できませんでした'
+    return redirect('/admin#rfid-section')
 
 @rfid_api.post('/api/rfid/scan')
 @auth_device
@@ -158,13 +159,18 @@ def scan_card():
             if found:
                 req_id = found['id']
             else:
-                cur = con.execute('''INSERT INTO requests(student_id,key,action,status,time)
-                    VALUES(?,?,'開ける','申請中',?)''',(student_id,room,timestamp()))
+                cur = con.execute('''INSERT INTO requests(student_id,key,action,status,time,source)
+                    VALUES(?,?,'開ける','申請中',?,'カード')''',(student_id,room,timestamp()))
                 req_id = cur.lastrowid
             con.execute('''INSERT INTO access_events(event_at,device_id,uid,student_id,room,event_type,detail)
                 VALUES(?,?,?,?,?,?,?)''',(timestamp(),DEVICE,uid,student_id,room,'rfid_pending',str(req_id)))
             return jsonify(allowed=False,requires_approval=True,request_id=req_id,reason='waiting_teacher_approval')
-        command_id = issue_command(con,room,'開ける','rfid_direct',student_id=student_id)
+        # Record the direct card action in the same requests table used by /admin.
+        req_cur = con.execute('''INSERT INTO requests(student_id,key,action,status,time,source)
+            VALUES(?,?,'開ける','承認',?,'カード')''', (student_id, room, timestamp()))
+        req_id = req_cur.lastrowid
+        con.execute("UPDATE requests SET approved_at=?, execution_status='実行待ち' WHERE id=?", (timestamp(), req_id))
+        command_id = issue_command(con,room,'開ける','rfid_direct',student_id=student_id,req_id=req_id)
         con.execute('''INSERT INTO access_events(event_at,device_id,uid,student_id,room,event_type,detail)
             VALUES(?,?,?,?,?,?,?)''',(timestamp(),DEVICE,uid,student_id,room,'rfid_allowed',str(command_id)))
         row = con.execute('SELECT * FROM device_commands WHERE id=?',(command_id,)).fetchone()
