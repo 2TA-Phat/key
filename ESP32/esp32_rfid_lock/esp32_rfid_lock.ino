@@ -10,23 +10,26 @@
 const char* WIFI_SSID = "TIST-FREE";
 const char* WIFI_PASSWORD = "TIST-FREE";
 const char* SERVER = "http://172.16.9.15:5000";  // PC LAN IPv4
-const char* DEVICE_TOKEN = "PASTE_LONG_RANDOM_DEVICE_TOKEN";
+const char* DEVICE_TOKEN = "TEST_TOKEN";
 const char* DEVICE_ID = "esp32-01";
 const char* ROOMS[] = {"1TA", "2TA", "2TB", "3TE"};
 const int SERVO_PINS[] = {13, 14, 25, 26};
 constexpr int RFID_SS = 21, RFID_RST = 22;
 constexpr int ROOM_BUTTON = 32;
-constexpr int LOCK_ANGLE = 0, UNLOCK_ANGLE = 120;
+constexpr int LOCK_ANGLE = 30, UNLOCK_ANGLE = 160;
 MFRC522 reader(RFID_SS, RFID_RST);
 Servo servo[4];
 int selectedRoom = 0;
 unsigned long lastPoll = 0, lastButton = 0, lastScan = 0, lastHeartbeat = 0;
+unsigned long wifiAttemptAt = 0, wifiLogAt = 0;
+bool wifiWasConnected = false;
 String previousUID;
 // Record recent IDs in RAM to prevent re-execution if repeated unexpectedly.
 int recentIds[20] = {0};
 size_t recentPos = 0;
 
 bool httpJson(const String& path, const String& payload, bool get, JsonDocument& response, int& code) {
+  code = -999;
   if (WiFi.status() != WL_CONNECTED) return false;
   HTTPClient http;
   http.setTimeout(2500);
@@ -38,7 +41,9 @@ bool httpJson(const String& path, const String& payload, bool get, JsonDocument&
   if (code <= 0) { http.end(); return false; }
   String body = http.getString();
   http.end();
-  return deserializeJson(response, body) == DeserializationError::Ok;
+  DeserializationError err = deserializeJson(response, body);
+  if (err) Serial.printf("JSON error: %s (HTTP %d)\n", err.c_str(), code);
+  return !err;
 }
 
 String uidString() {
@@ -62,9 +67,9 @@ void sendResult(int commandId, const char* result) {
   doc["result"] = result;
   String payload;
   serializeJson(doc, payload);
-  int status;
+  int status = -999;
   if (!httpJson("/api/device/result", payload, false, reply, status) || status != 200) {
-    Serial.println("WARNING: result delivery failed; reconcile server before retrying.");
+    Serial.printf("WARNING: result delivery failed (HTTP %d); reconcile before retrying.\n", status);
   }
 }
 
@@ -116,9 +121,19 @@ void scanRFID() {
 
 void pollCommands() {
   JsonDocument doc;
-  int status;
-  if (httpJson("/api/device/commands", "", true, doc, status) && status == 200) {
-    if (doc["has_command"].as<bool>()) executeCommand(doc);
+  int status = -999;
+  bool ok = httpJson("/api/device/commands", "", true, doc, status);
+  if (!ok) {
+    Serial.printf("HTTP/JSON FAILED, code: %d\n", status);
+    return;
+  }
+  if (status != 200) {
+    Serial.printf("Server error: HTTP %d\n", status);
+    return;
+  }
+  if (doc["has_command"].as<bool>()) {
+    Serial.println("Command received!");
+    executeCommand(doc);
   }
 }
 
@@ -132,23 +147,46 @@ void setup() {
   }
   SPI.begin(18, 19, 23, RFID_SS);
   reader.PCD_Init();
+  WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  wifiAttemptAt = millis();
   Serial.println("Boot. Selected room: 1TA");
+  Serial.printf("Connecting to WiFi SSID: %s\n", WIFI_SSID);
 }
 
 void loop() {
+  unsigned long now = millis();
   if (WiFi.status() != WL_CONNECTED) {
-    WiFi.reconnect();
-    delay(600);
+    wifiWasConnected = false;
+    if (now - wifiLogAt >= 3000) {
+      wifiLogAt = now;
+      Serial.printf("WiFi waiting, status=%d\n", (int)WiFi.status());
+    }
+    // Wait 20 seconds before restarting the connection attempt.
+    // Don't call WiFi.reconnect() every iteration while connecting.
+    if (now - wifiAttemptAt >= 20000) {
+      Serial.println("WiFi timeout: retrying connection...");
+      WiFi.disconnect();
+      WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+      wifiAttemptAt = now;
+    }
+    delay(100);
     return;
   }
-  unsigned long now = millis();
+  if (!wifiWasConnected) {
+    wifiWasConnected = true;
+    Serial.print("WiFi CONNECTED! ESP32 IP: ");
+    Serial.println(WiFi.localIP());
+    // Trigger first heartbeat promptly on connection.
+    lastHeartbeat = now - 60000UL;
+  }
   if (now - lastPoll >= 500) { lastPoll = now; pollCommands(); }
   if (now - lastHeartbeat >= 60000) {
     lastHeartbeat = now;
     JsonDocument out;
     int status;
-    httpJson("/api/device/heartbeat", "{}", false, out, status);
+    bool ok = httpJson("/api/device/heartbeat", "{}", false, out, status);
+    Serial.printf("Heartbeat: HTTP %d, JSON %s\n", status, ok ? "OK" : "FAILED");
   }
   if (digitalRead(ROOM_BUTTON) == LOW && now - lastButton > 400) {
     selectedRoom = (selectedRoom + 1) % 4;
