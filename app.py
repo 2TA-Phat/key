@@ -9,6 +9,9 @@ import json
 import re
 import time
 import hashlib
+import smtplib
+import ssl
+from email.message import EmailMessage
 
 from flask import Flask, request, redirect, render_template, session, url_for
 from rfid_api import rfid_api, initialize, issue_command, ROOMS, ACTIONS
@@ -99,32 +102,51 @@ def init_db():
         attempts INTEGER NOT NULL DEFAULT 0,
         last_sent_at INTEGER NOT NULL
     )""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS enrollment_invites (
+        student_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL, used_at INTEGER
+    )""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS pending_registrations (
+        student_id TEXT PRIMARY KEY, username TEXT NOT NULL, email TEXT NOT NULL,
+        password_hash TEXT NOT NULL, code_hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+        last_sent_at INTEGER NOT NULL, invite_hash TEXT NOT NULL
+    )""")
     conn.commit()
     conn.close()
 
 init_db()
 initialize(app.config["DATABASE"])
 
-# Discord Bot REST API. Bot が常駐する必要はありません。
-def discord_send_otp(discord_id, code):
-    token = os.environ.get('TIST_DISCORD_BOT_TOKEN', '').strip()
-    if not token or not re.fullmatch(r'\d{17,22}', discord_id or ''):
+# Gmail SMTP: application password via environment, not source control.
+def email_send_otp(address, code, purpose='ログイン'):
+    gmail = os.environ.get('TIST_SMTP_EMAIL', '').strip()
+    app_password = os.environ.get('TIST_SMTP_APP_PASSWORD', '').replace(' ', '')
+    if not gmail or not app_password:
+        app.logger.error('Gmail SMTP is not configured')
         return False
-    headers = {'Authorization': 'Bot ' + token, 'Content-Type': 'application/json', 'User-Agent': 'TISTKeySystem/1.0'}
-    def post(url, data):
-        req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers, method='POST')
-        with urllib.request.urlopen(req, timeout=8) as res:
-            return json.load(res)
+    message = EmailMessage()
+    message['From'] = gmail
+    message['To'] = address
+    message['Subject'] = f'【TIST 鍵管理システム】{purpose}認証コード'
+    message.set_content(f'認証コード：{code}\n有効期限：5分\nこのコードを他人に教えないでください。')
     try:
-        channel = post('https://discord.com/api/v10/users/@me/channels', {'recipient_id': discord_id})
-        post('https://discord.com/api/v10/channels/' + channel['id'] + '/messages', {
-            'content': '【TIST 鍵管理システム】\nログイン認証コード：' + code +
-                       '\n有効期限：5分\nこのコードを他人に教えないでください。',
-            'allowed_mentions': {'parse': []}})
+        with smtplib.SMTP('smtp.gmail.com', 587, timeout=12) as smtp:
+            smtp.ehlo()
+            smtp.starttls(context=ssl.create_default_context())
+            smtp.ehlo()
+            smtp.login(gmail, app_password)
+            smtp.send_message(message)
         return True
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, KeyError):
-        app.logger.warning('Discord DM delivery failed for configured account')
+    except (smtplib.SMTPException, OSError):
+        app.logger.exception('OTP mail delivery failed')
         return False
+
+def invite_hash(value):
+    return hmac.new(app.secret_key.encode(), ('invite:' + value).encode(), hashlib.sha256).hexdigest()
+
+def registration_hash(student_id, code):
+    return hmac.new(app.secret_key.encode(), f'reg:{student_id}:{code}'.encode(), hashlib.sha256).hexdigest()
 
 def make_otp_hash(manager_id, code):
     return hmac.new(app.secret_key.encode(), f'{manager_id}:{code}'.encode(), hashlib.sha256).hexdigest()
@@ -153,27 +175,40 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
+        invitation = request.form.get('invite', '').strip()
         with sqlite3.connect(app.config['DATABASE']) as conn:
             conn.row_factory = sqlite3.Row
-            manager = conn.execute("SELECT * FROM managers WHERE username=? AND status='有効'", (username,)).fetchone()
+            manager = conn.execute("SELECT * FROM managers WHERE username=? AND status IN ('有効','メール未確認')", (username,)).fetchone()
             if not (manager and manager['password'] and check_password_hash(manager['password'], password)):
                 return render_template('login.html', error='ユーザー名またはパスワードが違います。'), 401
-            if not re.fullmatch(r'\d{17,22}', (manager['discord_id'] or '').strip()):
-                return render_template('login.html', error='DiscordユーザーIDが未登録です。管理者にお問い合わせください。'), 400
-            conn.execute('BEGIN IMMEDIATE')
+            if manager['status'] == 'メール未確認' and manager['role'] != 'Student':
+                return render_template('login.html', error='アカウントを確認できません。'), 403
+            # School-issued invitation is required for student accounts at login, not at registration.
             now = int(time.time())
+            if manager['role'] == 'Student':
+                invite = conn.execute('SELECT * FROM enrollment_invites WHERE student_id=?',
+                                      (manager['student_id'],)).fetchone()
+                if (not invitation or not invite or invite['used_at'] is not None
+                        or invite['expires_at'] < now
+                        or not hmac.compare_digest(invite['token_hash'], invite_hash(invitation))):
+                    return render_template('login.html', error='招待コードが無効または期限切れです。学校から新しいコードを取得してください。'), 403
+            if not manager['email'] or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', manager['email']):
+                return render_template('login.html', error='メールアドレスが未登録です。管理者にお問い合わせください。'), 400
+            conn.execute('BEGIN IMMEDIATE')
             previous = conn.execute('SELECT last_sent_at FROM login_otp WHERE manager_id=?', (manager['id'],)).fetchone()
             if previous and now - previous['last_sent_at'] < 60:
                 return render_template('login.html', error='認証コードの再送信は60秒後にお試しください。'), 429
             code = f'{secrets.randbelow(1000000):06d}'
             # 送信前にOTPを無効化し、処理を直列化。送信失敗時はログイン不可。
             conn.execute('DELETE FROM login_otp WHERE manager_id=?', (manager['id'],))
-            if not discord_send_otp(manager['discord_id'], code):
-                return render_template('login.html', error='Discordに認証コードを送信できませんでした。BotとのDM設定をご確認ください。'), 503
+            if not email_send_otp(manager['email'], code):
+                return render_template('login.html', error='メール送信に失敗しました。管理者にお問い合わせください。'), 503
             conn.execute('INSERT INTO login_otp(manager_id,code_hash,expires_at,attempts,last_sent_at) VALUES(?,?,?,?,?)',
                          (manager['id'], make_otp_hash(manager['id'], code), now + 300, 0, now))
             session.clear()
             session['pending_manager_id'] = manager['id']
+            if manager['role'] == 'Student':
+                session['pending_invite_hash'] = invite['token_hash']
             session['otp_session_expires'] = now + 300
             return redirect(url_for('verify_otp'))
     return render_template('login.html')
@@ -193,7 +228,7 @@ def verify_otp():
             conn.row_factory = sqlite3.Row
             conn.execute('BEGIN IMMEDIATE')
             otp = conn.execute('SELECT * FROM login_otp WHERE manager_id=?', (manager_id,)).fetchone()
-            manager = conn.execute("SELECT * FROM managers WHERE id=? AND status='有効'", (manager_id,)).fetchone()
+            manager = conn.execute("SELECT * FROM managers WHERE id=? AND status IN ('有効','メール未確認')", (manager_id,)).fetchone()
             if not manager or not otp or now > otp['expires_at'] or otp['attempts'] >= 5:
                 conn.execute('DELETE FROM login_otp WHERE manager_id=?', (manager_id,))
                 session.clear()
@@ -205,6 +240,20 @@ def verify_otp():
                     session.clear()
                     return render_template('login.html', error='認証回数の上限に達しました。'), 429
                 return render_template('verify_otp.html', error='認証コードが正しくありません。'), 401
+            if manager['role'] == 'Student':
+                invite = conn.execute('SELECT * FROM enrollment_invites WHERE student_id=?',
+                                      (manager['student_id'],)).fetchone()
+                expected_invite_hash = session.get('pending_invite_hash', '')
+                if (not invite or invite['used_at'] is not None or now > invite['expires_at']
+                        or not expected_invite_hash
+                        or not hmac.compare_digest(invite['token_hash'], expected_invite_hash)):
+                    conn.execute('DELETE FROM login_otp WHERE manager_id=?', (manager_id,))
+                    session.clear()
+                    return render_template('login.html', error='招待コードの有効期限が切れました。再度ログインしてください。'), 403
+                conn.execute('UPDATE enrollment_invites SET used_at=? WHERE student_id=?',
+                             (now, manager['student_id']))
+            if manager['role'] == 'Student' and manager['status'] == 'メール未確認':
+                conn.execute("UPDATE managers SET status='有効' WHERE id=? AND status='メール未確認'", (manager_id,))
             conn.execute('DELETE FROM login_otp WHERE manager_id=?', (manager_id,))
         session.clear()
         session.update(logged_in=True, manager_id=manager['id'], username=manager['username'],
@@ -226,18 +275,22 @@ def index():
 @app.route('/student_submit', methods=['GET', 'POST'])
 def student_submit():
     if request.method == 'GET':
+        if not session.get('logged_in') or not session.get('otp_verified'):
+            return redirect(url_for('login'))
         if session.get('logged_in') and not session.get('csrf'):
             session['csrf'] = secrets.token_hex(24)
         return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
                                authenticated=bool(session.get('logged_in') and session.get('otp_verified')),
                                student_id=session.get('student_id', ''))
+    if not session.get('logged_in') or not session.get('otp_verified'):
+        return redirect(url_for('login'))
     student_id = request.form.get('student_id', '').strip()
     key = request.form.get('key', '').strip()
     action = request.form.get('action', '').strip()
     if key not in ROOMS or action not in ACTIONS:
         return '教室または操作の指定が正しくありません。', 400
     authed = bool(session.get('logged_in') and session.get('otp_verified'))
-    if authed and not hmac.compare_digest(request.form.get('csrf', ''), session.get('csrf', '')):
+    if not hmac.compare_digest(request.form.get('csrf', ''), session.get('csrf', '')):
         return '認証エラー', 403
     if authed and not is_admin():
         if not session.get('student_id'):
@@ -289,32 +342,39 @@ def status():
 
     return render_template("student.html", results=results)
 
-@app.route("/register", methods=["GET", "POST"])
+@app.route('/register', methods=['GET', 'POST'])
 def register():
-    if request.method == "GET":
-        return render_template("register.html")
-
-    data = (
-        request.form["student_id"],
-        request.form["name"],
-        request.form["department"],
-        request.form["course"],
-        request.form["class"],
-        request.form["number"]
-    )
-
-    conn = sqlite3.connect(app.config["DATABASE"])
-    cur = conn.cursor()
-
-    cur.execute("""
-        INSERT INTO students (student_id, name, department, course, class, number)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, data)
-
-    conn.commit()
-    conn.close()
-
-    return "登録完了しました！"
+    if request.method == 'GET':
+        session['register_csrf'] = secrets.token_hex(24)
+        return render_template('register.html', csrf=session['register_csrf'])
+    if not session.get('register_csrf') or not hmac.compare_digest(request.form.get('csrf', ''), session['register_csrf']):
+        return '認証エラー', 403
+    student_id = request.form.get('student_id', '').strip()
+    username = request.form.get('username', '').strip()
+    email = request.form.get('email', '').strip().lower()
+    password = request.form.get('password', '')
+    def invalid(message, status=400):
+        return render_template('register.html', error=message, csrf=session['register_csrf']), status
+    if (not re.fullmatch(r'[A-Za-z0-9_-]{3,64}', username)
+            or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email)
+            or len(email) > 254 or len(password) < 8 or len(password) > 15
+            or not student_id):
+        return invalid('入力内容をご確認ください。パスワードは8～15文字にしてください。')
+    # Create an inactive account. Email is verified during the FIRST login OTP.
+    # A student must already exist in the school-controlled students table.
+    with sqlite3.connect(app.config['DATABASE'], timeout=15) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute('BEGIN IMMEDIATE')
+        student = conn.execute('SELECT student_id,name FROM students WHERE student_id=?', (student_id,)).fetchone()
+        claimed = conn.execute('SELECT 1 FROM managers WHERE student_id=? OR username=? OR lower(email)=?',
+                               (student_id,username,email)).fetchone()
+        if not student or claimed:
+            return invalid('登録できません。学籍番号またはアカウント情報をご確認ください。')
+        conn.execute("""INSERT INTO managers (username,password,name,email,role,status,student_id)
+                        VALUES (?,?,?,?,'Student','メール未確認',?)""",
+                     (username,generate_password_hash(password),student['name'],email,student_id))
+    session.pop('register_csrf',None)
+    return render_template('registration_complete.html')
 
 # --- ユーザー画面 ---
 @app.route("/users")

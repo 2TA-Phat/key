@@ -48,26 +48,13 @@
 <h2>生徒新規登録</h2>
 
 <div class="card">
+    {% if error %}<p style="color:#c21">{{ error }}</p>{% endif %}
     <form action="/register" method="post">
-
-        <label>学籍番号</label>
-        <input type="text" name="student_id" required>
-
-        <label>名前</label>
-        <input type="text" name="name" required>
-
-        <label>学科</label>
-        <input type="text" name="department" required>
-
-        <label>コース</label>
-        <input type="text" name="course" required>
-
-        <label>クラス</label>
-        <input type="text" name="class" required>
-
-        <label>出席番号</label>
-        <input type="number" name="number" required>
-
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label>学籍番号</label><input name="student_id" required>
+        <label>ユーザー名</label><input name="username" minlength="3" maxlength="64" required>
+        <label>メールアドレス</label><input name="email" type="email" required>
+        <label>パスワード（8～15文字）</label><input name="password" type="password" minlength="8" maxlength="15" required>
         <button type="submit">登録する</button>
     </form>
 </div>
