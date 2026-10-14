@@ -183,7 +183,11 @@ def scan_card():
 def get_command():
     with db() as con:
         con.execute('BEGIN IMMEDIATE')
+        expired = con.execute("SELECT request_id FROM device_commands WHERE state='pending' AND expires_at < ?", (timestamp(),)).fetchall()
         con.execute("UPDATE device_commands SET state='expired' WHERE state='pending' AND expires_at < ?",(timestamp(),))
+        for item in expired:
+            if item['request_id'] is not None:
+                con.execute("UPDATE requests SET execution_status='期限切れ' WHERE id=?", (item['request_id'],))
         row = con.execute('''SELECT * FROM device_commands WHERE state='pending'
             AND device_id=? AND expires_at>=? ORDER BY id LIMIT 1''',(DEVICE,timestamp())).fetchone()
         if row is None:

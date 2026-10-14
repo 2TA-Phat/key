@@ -1,4 +1,7 @@
 import sqlite3
+import os
+import hmac
+
 from flask import Flask, request, redirect, render_template, session, url_for
 from rfid_api import rfid_api, initialize, issue_command, ROOMS, ACTIONS
 from datetime import datetime
@@ -6,12 +9,16 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 
 app = Flask(__name__)
-import os
+
 app.secret_key = os.environ.get("TIST_FLASK_SECRET", "CHANGE_ME_LOCAL_DEMO_ONLY")
 app.config["DATABASE"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.db")
 app.register_blueprint(rfid_api)
 
 # Cấu hình Mặc định Tài khoản & Mật khẩu Admin
+
+
+
+
 
 
 # --- DB 初期化 ---
@@ -197,27 +204,73 @@ def users():
     if not session.get("logged_in"):
         return redirect("/login")
 
+    # Điều kiện từ form GET /users?contact_id=...&date_from=...&date_to=...
+    contact_id = request.args.get("contact_id", "").strip()
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+
+    # Giới hạn ngày an toàn và tránh lỗi khi truy vấn.
+    for value in (date_from, date_to):
+        if value:
+            try:
+                datetime.strptime(value, "%Y-%m-%d")
+            except ValueError:
+                return "日付の形式が正しくありません。", 400
+
     conn = sqlite3.connect(app.config["DATABASE"])
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT 
+    # Tính thời gian đầu/cuối và tổng số yêu cầu trên TOÀN BỘ lịch sử.
+    # Chỉ dùng EXISTS để xác định học sinh có yêu cầu trong khoảng ngày lọc.
+    where_conditions = []
+    params = []
+    if contact_id:
+        escaped_id = contact_id.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        where_conditions.append("s.student_id LIKE ? ESCAPE '\\'")
+        params.append("%" + escaped_id + "%")
+
+    # if date_from or date_to:
+    #     conditions = ["rf.student_id = s.student_id"]
+    #     if date_from:
+    #         conditions.append("rf.time >= ?")
+    #         params.append(date_from + " 00:00:00")
+    #     if date_to:
+    #         from datetime import timedelta
+    #         next_day = (datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    #         conditions.append("rf.time < ?")
+    #         params.append(next_day + " 00:00:00")
+    #     where_conditions.append("EXISTS (SELECT 1 FROM requests rf WHERE " + " AND ".join(conditions) + ")")
+
+    sql = """
+        SELECT
             s.student_id AS contact_id,
-            s.name,
-            s.department,
-            s.course,
-            s.class,
-            s.number,
+            s.name, s.department, s.course, s.class, s.number,
             MIN(r.time) AS first_login,
             MAX(r.time) AS last_login,
             SUM(CASE WHEN r.status = '申請中' THEN 1 ELSE 0 END) AS pending_count,
             SUM(CASE WHEN r.status IN ('承認', '却下') THEN 1 ELSE 0 END) AS done_count
         FROM students s
         LEFT JOIN requests r ON s.student_id = r.student_id
-        GROUP BY s.student_id
-        ORDER BY last_login DESC
-    """)
+    """
+    if where_conditions:
+        sql += " WHERE " + " AND ".join(where_conditions)
+
+    sql += " GROUP BY s.student_id HAVING 1=1"
+
+    if date_from:
+        sql += " AND DATE(MIN(r.time)) >= ?"
+        params.append(date_from)
+
+    if date_to:
+        sql += " AND DATE(MIN(r.time)) <= ?"
+        params.append(date_to)
+
+    sql += " ORDER BY last_login DESC, s.student_id ASC"
+    print("SQL ĐANG CHẠY:", sql, flush=True)
+    print("PARAMS:", params, flush=True)
+
+    cur.execute(sql, params)
     rows = cur.fetchall()
     conn.close()
 
@@ -279,7 +332,13 @@ def admin():
     """)
     done_rows = cur.fetchall()
 
+    device_event = cur.execute("""SELECT event_at FROM access_events
+        WHERE device_id='esp32-01' AND event_type='heartbeat'
+        ORDER BY id DESC LIMIT 1""").fetchone()
     conn.close()
+    last_seen = device_event['event_at'] if device_event else None
+    device_online = bool(last_seen and
+        (datetime.now() - datetime.strptime(last_seen, '%Y-%m-%d %H:%M:%S')).total_seconds() < 90)
 
     pending = [dict(row) for row in pending_rows]
     done = [dict(row) for row in done_rows]
@@ -287,7 +346,23 @@ def admin():
     import secrets
     if 'csrf' not in session:
         session['csrf'] = secrets.token_hex(24)
-    return render_template("admin.html", pending=pending, done=done, csrf=session['csrf'])
+    return render_template("admin.html", pending=pending, done=done, csrf=session['csrf'], device_online=device_online, last_seen=last_seen)
+
+@app.get('/admin/api/lock-status')
+def lock_status():
+    if not session.get('logged_in'):
+        return {'error': 'unauthorized'}, 401
+    with sqlite3.connect(app.config['DATABASE']) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("""SELECT id, status, execution_status, executed_at
+            FROM requests ORDER BY id DESC LIMIT 100""").fetchall()
+        last = conn.execute("""SELECT event_at FROM access_events
+            WHERE device_id='esp32-01' AND event_type='heartbeat'
+            ORDER BY id DESC LIMIT 1""").fetchone()
+    seen = last['event_at'] if last else None
+    online = bool(seen and (datetime.now() - datetime.strptime(seen, '%Y-%m-%d %H:%M:%S')).total_seconds() < 90)
+    return {'online': online, 'last_seen': seen,
+            'requests': [dict(r) for r in rows]}
 
 # --- 管理者一覧画面 (MỚI BỔ SUNG) ---
 @app.route("/admin/managers")
@@ -535,3 +610,4 @@ def delete(req_id):
 # --- 起動 ---
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
+

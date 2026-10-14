@@ -208,6 +208,7 @@
 
       <div class="content">
         <h2 class="page-title">申請一覧</h2>
+        <p id="esp32-status" style="font-weight:bold">ESP32: {{ 'オンライン' if device_online else 'オフライン' }} | 最終通信: {{ last_seen or '記録なし' }}</p>
 
         <div class="table-wrap">
           <table class="request-table">
@@ -234,6 +235,7 @@
                 <th>出席番号</th>
 
                 <th>ステータス</th>
+                <th>サーボ指令状態</th>
 
                 <th>操作</th>
               </tr>
@@ -274,6 +276,7 @@
                 <td>
                   <span class="status-pending"> 未処理 </span>
                 </td>
+                <td class="servo-status" data-request-id="{{ item.id }}">{{ item.execution_status or '未送信' }}</td>
 
                 <td>
                   <div class="action-buttons">
@@ -324,8 +327,10 @@
                 <td>{{ item.number }}</td>
 
                 <td>
-                  <span class="status-complete"> 完成 </span>
+                  {% if item.status == '承認' %}<span class="status-complete">承認</span>
+                  {% else %}<span class="status-pending">却下</span>{% endif %}
                 </td>
+                <td class="servo-status" data-request-id="{{ item.id }}">{{ item.execution_status or '送信なし' }}</td>
 
                 <td></td>
               </tr>
@@ -337,7 +342,7 @@
               {% if not pending and not done %}
 
               <tr>
-                <td colspan="12" class="empty-row">データがありません。</td>
+                <td colspan="13" class="empty-row">データがありません。</td>
               </tr>
 
               {% endif %}
@@ -349,6 +354,24 @@
       </div>
     </div>
 
+    <script>
+      async function refreshServoStatus() {
+        try {
+          const res = await fetch('/admin/api/lock-status', {credentials: 'same-origin',cache:'no-store'});
+          if (!res.ok) return;
+          const json = await res.json();
+          document.getElementById('esp32-status').textContent = 'ESP32: ' +
+            (json.online ? 'オンライン' : 'オフライン') +
+            ' | 最終通信: ' + (json.last_seen || '記録なし');
+          for (const item of json.requests) {
+            const cell = document.querySelector('.servo-status[data-request-id="' + item.id + '"]');
+            if (cell) cell.textContent = item.execution_status || (item.status === '却下' ? '送信なし' : '未送信');
+          }
+        } catch (err) { console.debug('status polling failed',err); }
+      }
+      refreshServoStatus();
+      setInterval(refreshServoStatus, 2000);
+    </script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
   </body>
 </html>

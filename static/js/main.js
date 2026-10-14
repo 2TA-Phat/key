@@ -138,52 +138,39 @@ function changeDonePage(page) {
     renderDone();
 }
 
-// --- DOM CONTENT LOADED ---
+// --- USER FILTER (/users) ---
 document.addEventListener('DOMContentLoaded', function () {
     const btnSearch = document.getElementById('btn-search');
+    const form = document.getElementById('filter-form') || (btnSearch && btnSearch.closest('form'));
+    if (!form || !btnSearch) return;
     const btnClear = document.getElementById('btn-clear');
+    const inputs = [
+        document.getElementById('date_from'),
+        document.getElementById('date_to'),
+        document.getElementById('student_id')
+    ];
 
-    if (!btnSearch) return;
-
-    const startDate = document.getElementById('date_from') || document.querySelector('input[name="date_from"]');
-    const endDate = document.getElementById('date_to') || document.querySelector('input[name="date_to"]');
-    const studentIdInput = document.getElementById('student_id') || document.querySelector('input[name="contact_id"]');
-
-    // Hàm kiểm tra bật/tắt nút Search
-    function checkInputs() {
-        const hasStart = startDate && startDate.value.trim() !== '';
-        const hasEnd = endDate && endDate.value.trim() !== '';
-        const hasStudentId = studentIdInput && studentIdInput.value.trim() !== '';
-
-        if (hasStart || hasEnd || hasStudentId) {
-            btnSearch.removeAttribute('disabled');
-        } else {
-            btnSearch.setAttribute('disabled', 'true');
+    function updateSearchButton() {
+        const hasFilter = inputs.some(input => input && input.value.trim() !== '');
+        if (btnSearch) {
+            btnSearch.disabled = !hasFilter; // Không gửi form rỗng
+            btnSearch.classList.toggle('has-filter', hasFilter);
         }
     }
 
-    // Lắng nghe thay đổi ô nhập liệu
-    [startDate, endDate, studentIdInput].forEach(function (input) {
-        if (input) {
-            input.addEventListener('input', checkInputs);
-            input.addEventListener('change', checkInputs);
-            input.addEventListener('keyup', checkInputs);
-        }
+    inputs.forEach(input => {
+        if (!input) return;
+        input.addEventListener('input', updateSearchButton);
+        input.addEventListener('change', updateSearchButton);
     });
 
-    // Nút Clear bộ lọc
     if (btnClear) {
         btnClear.addEventListener('click', function () {
-            if (startDate) startDate.value = '';
-            if (endDate) endDate.value = '';
-            if (studentIdInput) studentIdInput.value = '';
-            
-            checkInputs();
-            window.location.href = window.location.pathname;
+            window.location.href = form.action;
         });
     }
 
-    checkInputs();
+    updateSearchButton();
 });
 
 // --- CONTROLS CHO TẬP NÚT FILTER ---

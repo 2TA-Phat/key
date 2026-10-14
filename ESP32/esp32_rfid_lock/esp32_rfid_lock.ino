@@ -7,9 +7,9 @@
 #include <ESP32Servo.h>
 #include <ArduinoJson.h>
 
-const char* WIFI_SSID = "YOUR_WIFI";
-const char* WIFI_PASSWORD = "YOUR_PASSWORD";
-const char* SERVER = "http://192.168.1.100:5000";  // PC LAN IPv4
+const char* WIFI_SSID = "TIST-FREE";
+const char* WIFI_PASSWORD = "TIST-FREE";
+const char* SERVER = "http://172.16.9.15:5000";  // PC LAN IPv4
 const char* DEVICE_TOKEN = "PASTE_LONG_RANDOM_DEVICE_TOKEN";
 const char* DEVICE_ID = "esp32-01";
 const char* ROOMS[] = {"1TA", "2TA", "2TB", "3TE"};

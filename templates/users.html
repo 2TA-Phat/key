@@ -99,6 +99,10 @@
         font-weight: bold;
       }
 
+      .btn-filter-submit.has-filter {
+        background: #007bff;
+      }
+
       .btn-filter-submit:hover {
         opacity: 0.9;
       }
@@ -239,7 +243,7 @@
 
           <!-- Khung nội dung tìm kiếm (có thể ẩn/hiện) -->
           <div id="filter-content" class="filter-content">
-            <form method="get" action="/users">
+            <form method="get" action="/users" id="filter-form">
               <!-- PERIOD (期間) -->
               <div class="filter-row">
                 <label class="filter-label"> 期間 </label>
@@ -283,7 +287,6 @@
                   type="submit"
                   id="btn-search"
                   class="btn-filter-submit"
-                  disabled
                 >
                   絞り込み条件を反映する
                 </button>
