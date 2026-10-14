@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Admin Login</title>
+<title>TIST 鍵管理システム｜ログイン</title>
 <style>
     body { 
         font-family: sans-serif; 
@@ -21,7 +21,7 @@
         margin: 0; 
     }
     .card { 
-        background: rgba(255, 255, 255, 0.9); /* Nền trắng hơi trong suốt để nhìn rõ form */
+        background: rgba(255, 255, 255, 0.9); 
         padding: 30px; 
         border-radius: 12px; 
         box-shadow: 0 4px 15px rgba(0,0,0,0.2); 
@@ -69,17 +69,18 @@
 </head>
 <body>
 <div class="card">
-    <h3>管理者ログイン</h3>
+    <h3>TIST 鍵管理システム</h3>
     {% if error %}
         <div class="error">{{ error }}</div>
     {% endif %}
     <form action="/login" method="post">
-        <label>ユーザー名 (Tài khoản)</label>
+        <label>ユーザー名</label>
         <input type="text" name="username" required>
-        <label>パスワード (Mật khẩu)</label>
+        <label>パスワード</label>
         <input type="password" name="password" required>
         <button type="submit">ログイン</button>
     </form>
+    <p style="text-align:center;margin:20px 0 0"><a href="/student_submit">ログインせずに開錠申請</a></p>
 </div>
 </body>
 </html>

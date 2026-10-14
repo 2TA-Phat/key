@@ -1,16 +1,27 @@
 import sqlite3
 import os
 import hmac
+import secrets
+import urllib.parse
+import urllib.request
+import urllib.error
+import json
+import re
+import time
+import hashlib
 
 from flask import Flask, request, redirect, render_template, session, url_for
 from rfid_api import rfid_api, initialize, issue_command, ROOMS, ACTIONS
-from datetime import datetime
+from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 
 
 app = Flask(__name__)
 
 app.secret_key = os.environ.get("TIST_FLASK_SECRET", "CHANGE_ME_LOCAL_DEMO_ONLY")
+if app.secret_key == "CHANGE_ME_LOCAL_DEMO_ONLY" and os.environ.get("TIST_ALLOW_LOCAL_DEMO") != "1":
+    raise RuntimeError("TIST_FLASK_SECRET を設定してください。")
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=os.environ.get("TIST_HTTPS", "0") == "1")
 app.config["DATABASE"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.db")
 app.register_blueprint(rfid_api)
 
@@ -69,91 +80,198 @@ def init_db():
     cols = {row[1] for row in cur.fetchall()}
     if "source" not in cols:
         cur.execute("ALTER TABLE requests ADD COLUMN source TEXT NOT NULL DEFAULT 'Web申請'")
+    cur.execute("PRAGMA table_info(managers)")
+    mcols = {r[1] for r in cur.fetchall()}
+    for field in ("phone", "student_id"):
+        if field not in mcols:
+            cur.execute(f"ALTER TABLE managers ADD COLUMN {field} TEXT")
+    cur.execute("""CREATE TABLE IF NOT EXISTS room_permissions (
+        manager_id INTEGER NOT NULL,
+        room TEXT NOT NULL,
+        PRIMARY KEY(manager_id, room)
+    )""")
+    if 'discord_id' not in mcols:
+        cur.execute('ALTER TABLE managers ADD COLUMN discord_id TEXT')
+    cur.execute("""CREATE TABLE IF NOT EXISTS login_otp (
+        manager_id INTEGER PRIMARY KEY,
+        code_hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_sent_at INTEGER NOT NULL
+    )""")
     conn.commit()
     conn.close()
 
 init_db()
 initialize(app.config["DATABASE"])
 
-# --- XL ĐĂNG NHẬP / ĐĂNG XUẤT ---
-@app.route("/login", methods=["GET", "POST"])
+# Discord Bot REST API. Bot が常駐する必要はありません。
+def discord_send_otp(discord_id, code):
+    token = os.environ.get('TIST_DISCORD_BOT_TOKEN', '').strip()
+    if not token or not re.fullmatch(r'\d{17,22}', discord_id or ''):
+        return False
+    headers = {'Authorization': 'Bot ' + token, 'Content-Type': 'application/json', 'User-Agent': 'TISTKeySystem/1.0'}
+    def post(url, data):
+        req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers, method='POST')
+        with urllib.request.urlopen(req, timeout=8) as res:
+            return json.load(res)
+    try:
+        channel = post('https://discord.com/api/v10/users/@me/channels', {'recipient_id': discord_id})
+        post('https://discord.com/api/v10/channels/' + channel['id'] + '/messages', {
+            'content': '【TIST 鍵管理システム】\nログイン認証コード：' + code +
+                       '\n有効期限：5分\nこのコードを他人に教えないでください。',
+            'allowed_mentions': {'parse': []}})
+        return True
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, KeyError):
+        app.logger.warning('Discord DM delivery failed for configured account')
+        return False
+
+def make_otp_hash(manager_id, code):
+    return hmac.new(app.secret_key.encode(), f'{manager_id}:{code}'.encode(), hashlib.sha256).hexdigest()
+
+ADMIN_ROLES = {'Administrator', 'Admin', '管理者', '教員', 'Teacher', 'Operator'}
+
+def is_admin():
+    return bool(session.get('logged_in') and session.get('role') in ADMIN_ROLES)
+
+@app.before_request
+def admin_access_control():
+    if session.get('logged_in'):
+        with sqlite3.connect(app.config['DATABASE']) as con:
+            info = con.execute("SELECT status,role FROM managers WHERE id=?",(session.get('manager_id'),)).fetchone()
+        if not info or info[0] != '有効' or info[1] != session.get('role') or not session.get('otp_verified'):
+            session.clear()
+            return redirect(url_for('login'))
+    sensitive = ('/admin', '/users', '/approve/', '/reject/', '/delete/')
+    if request.path.startswith(sensitive) and not is_admin():
+        return redirect(url_for('login')) if not session.get('logged_in') else ('アクセス権限がありません。', 403)
+    if request.path.startswith('/admin/managers') and session.get('role') != 'Administrator':
+        return 'アクセス権限がありません。', 403
+
+@app.route('/login', methods=['GET', 'POST'])
 def login():
-    if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            conn.row_factory = sqlite3.Row
+            manager = conn.execute("SELECT * FROM managers WHERE username=? AND status='有効'", (username,)).fetchone()
+            if not (manager and manager['password'] and check_password_hash(manager['password'], password)):
+                return render_template('login.html', error='ユーザー名またはパスワードが違います。'), 401
+            if not re.fullmatch(r'\d{17,22}', (manager['discord_id'] or '').strip()):
+                return render_template('login.html', error='DiscordユーザーIDが未登録です。管理者にお問い合わせください。'), 400
+            conn.execute('BEGIN IMMEDIATE')
+            now = int(time.time())
+            previous = conn.execute('SELECT last_sent_at FROM login_otp WHERE manager_id=?', (manager['id'],)).fetchone()
+            if previous and now - previous['last_sent_at'] < 60:
+                return render_template('login.html', error='認証コードの再送信は60秒後にお試しください。'), 429
+            code = f'{secrets.randbelow(1000000):06d}'
+            # 送信前にOTPを無効化し、処理を直列化。送信失敗時はログイン不可。
+            conn.execute('DELETE FROM login_otp WHERE manager_id=?', (manager['id'],))
+            if not discord_send_otp(manager['discord_id'], code):
+                return render_template('login.html', error='Discordに認証コードを送信できませんでした。BotとのDM設定をご確認ください。'), 503
+            conn.execute('INSERT INTO login_otp(manager_id,code_hash,expires_at,attempts,last_sent_at) VALUES(?,?,?,?,?)',
+                         (manager['id'], make_otp_hash(manager['id'], code), now + 300, 0, now))
+            session.clear()
+            session['pending_manager_id'] = manager['id']
+            session['otp_session_expires'] = now + 300
+            return redirect(url_for('verify_otp'))
+    return render_template('login.html')
 
-        conn = sqlite3.connect(app.config["DATABASE"])
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
+@app.route('/verify-otp', methods=['GET', 'POST'])
+def verify_otp():
+    manager_id = session.get('pending_manager_id')
+    if not manager_id or int(time.time()) > session.get('otp_session_expires', 0):
+        session.clear()
+        return redirect(url_for('login'))
+    if request.method == 'POST':
+        code = request.form.get('code', '').strip()
+        if not re.fullmatch(r'\d{6}', code):
+            return render_template('verify_otp.html', error='6桁の認証コードを入力してください。'), 400
+        now = int(time.time())
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute('BEGIN IMMEDIATE')
+            otp = conn.execute('SELECT * FROM login_otp WHERE manager_id=?', (manager_id,)).fetchone()
+            manager = conn.execute("SELECT * FROM managers WHERE id=? AND status='有効'", (manager_id,)).fetchone()
+            if not manager or not otp or now > otp['expires_at'] or otp['attempts'] >= 5:
+                conn.execute('DELETE FROM login_otp WHERE manager_id=?', (manager_id,))
+                session.clear()
+                return render_template('login.html', error='認証コードが無効です。再度ログインしてください。'), 401
+            conn.execute('UPDATE login_otp SET attempts=attempts+1 WHERE manager_id=?', (manager_id,))
+            if not hmac.compare_digest(otp['code_hash'], make_otp_hash(manager_id, code)):
+                if otp['attempts'] + 1 >= 5:
+                    conn.execute('DELETE FROM login_otp WHERE manager_id=?', (manager_id,))
+                    session.clear()
+                    return render_template('login.html', error='認証回数の上限に達しました。'), 429
+                return render_template('verify_otp.html', error='認証コードが正しくありません。'), 401
+            conn.execute('DELETE FROM login_otp WHERE manager_id=?', (manager_id,))
+        session.clear()
+        session.update(logged_in=True, manager_id=manager['id'], username=manager['username'],
+                       name=manager['name'], role=manager['role'], student_id=manager['student_id'], otp_verified=True)
+        session['csrf'] = secrets.token_hex(24)
+        return redirect(url_for('admin') if is_admin() else url_for('student_submit'))
+    return render_template('verify_otp.html')
 
-        cur.execute("""
-            SELECT *
-            FROM managers
-            WHERE username = ?
-              AND status = '有効'
-        """, (username,))
-
-        manager = cur.fetchone()
-        conn.close()
-
-        if manager and check_password_hash(manager["password"], password):
-            session["logged_in"] = True
-            session["manager_id"] = manager["id"]
-            session["username"] = manager["username"]
-            session["name"] = manager["name"]
-            session["role"] = manager["role"]
-
-            return redirect("/admin")
-
-        return render_template(
-            "login.html",
-            error="ユーザー名またはパスワードが違います"
-        )
-
-    return render_template("login.html")
-@app.route("/logout")
+@app.route('/logout')
 def logout():
-    session.pop("logged_in", None)
-    return redirect("/login")
+    session.clear()
+    return redirect(url_for('login'))
 
 # --- 生徒画面 ---
-@app.route("/")
+@app.route('/')
 def index():
-    return redirect("/student_submit")
+    return redirect(url_for('login'))
 
-@app.route("/student_submit", methods=["GET", "POST"])
+@app.route('/student_submit', methods=['GET', 'POST'])
 def student_submit():
-    if request.method == "GET":
-        return render_template("student.html")
-
-    student_id = request.form.get("student_id")
-    key = request.form.get("key")
-    action = request.form.get("action")
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    conn = sqlite3.connect(app.config["DATABASE"])
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM students WHERE student_id=?", (student_id,))
-    student = cur.fetchone()
-
-    if not student:
-        conn.close()
-        return render_template("student.html", error="学籍番号が登録されていません")
-
-    cur.execute("""
-        INSERT INTO requests (student_id, key, action, status, time, source)
-        VALUES (?, ?, ?, '申請中', ?, 'Web申請')
-    """, (student_id, key, action, now))
-
-    conn.commit()
-    conn.close()
-
-    return render_template("student.html", sent=True)
+    if request.method == 'GET':
+        if session.get('logged_in') and not session.get('csrf'):
+            session['csrf'] = secrets.token_hex(24)
+        return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
+                               authenticated=bool(session.get('logged_in') and session.get('otp_verified')),
+                               student_id=session.get('student_id', ''))
+    student_id = request.form.get('student_id', '').strip()
+    key = request.form.get('key', '').strip()
+    action = request.form.get('action', '').strip()
+    if key not in ROOMS or action not in ACTIONS:
+        return '教室または操作の指定が正しくありません。', 400
+    authed = bool(session.get('logged_in') and session.get('otp_verified'))
+    if authed and not hmac.compare_digest(request.form.get('csrf', ''), session.get('csrf', '')):
+        return '認証エラー', 403
+    if authed and not is_admin():
+        if not session.get('student_id'):
+            return '学籍番号がアカウントに設定されていません。', 403
+        student_id = session['student_id']
+    with sqlite3.connect(app.config['DATABASE']) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute('BEGIN IMMEDIATE')
+        student = conn.execute('SELECT student_id FROM students WHERE student_id=?', (student_id,)).fetchone()
+        if not student:
+            return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
+                                   authenticated=authed, student_id=student_id,
+                                   error='学籍番号が登録されていません。'), 400
+        instant = False
+        if authed and (not is_admin() or session.get('student_id') == student_id):
+            permission = conn.execute('SELECT 1 FROM room_permissions WHERE manager_id=? AND room=?',
+                                      (session['manager_id'], key)).fetchone()
+            instant = bool(permission)
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cur = conn.execute("INSERT INTO requests (student_id, key, action, status, time, source) VALUES (?, ?, ?, '申請中', ?, ?)",
+                           (student_id, key, action, now, '認証済Web申請' if authed else 'Web申請'))
+        if instant:
+            conn.execute("UPDATE requests SET status='承認', approved_at=?, execution_status='待機中' WHERE id=?",
+                         (now, cur.lastrowid))
+            issue_command(conn, key, action, 'verified_user', student_id, cur.lastrowid)
+    return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
+                           authenticated=authed, student_id=student_id, sent=True,
+                           message='開錠指令を送信しました。装置の応答をお待ちください。' if instant else '申請を受け付けました。教員の承認をお待ちください。')
 
 @app.route("/status", methods=["POST"])
 def status():
     student_id = request.form.get("student_id")
+    if not is_admin() and (not session.get('otp_verified') or session.get('student_id') != student_id):
+        return 'アクセス権限がありません。', 403
 
     conn = sqlite3.connect(app.config["DATABASE"])
     conn.row_factory = sqlite3.Row
@@ -546,10 +664,11 @@ def manager_edit(manager_id):
 
 
 # --- 管理者削除 ---
-@app.route("/admin/managers/<int:manager_id>/delete")
+@app.route("/admin/managers/<int:manager_id>/delete", methods=["POST"])
 def manager_delete(manager_id):
-    if not session.get("logged_in"):
-        return redirect("/login")
+    from rfid_api import valid_csrf
+    if not valid_csrf():
+        return "認証エラー", 403
 
     if session.get("manager_id") == manager_id:
         return redirect("/admin/managers")
@@ -566,6 +685,45 @@ def manager_delete(manager_id):
     conn.close()
 
     return redirect("/admin/managers")
+
+@app.route('/admin/access-settings', methods=['GET', 'POST'])
+def access_settings():
+    if not session.get('logged_in') or session.get('role') != 'Administrator':
+        return 'アクセス権限がありません。', 403
+    if request.method == 'POST':
+        from rfid_api import valid_csrf
+        if not valid_csrf():
+            return '認証エラー', 403
+        manager_id = request.form.get('manager_id', type=int)
+        discord_id = request.form.get('discord_id', '').strip()
+        student_id = request.form.get('student_id', '').strip()
+        rooms = request.form.getlist('rooms')
+        if discord_id and not re.fullmatch(r'\d{17,22}', discord_id):
+            return 'DiscordユーザーIDの形式が正しくありません。', 400
+        if any(room not in ROOMS for room in rooms):
+            return '教室の指定が正しくありません。', 400
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            if not conn.execute('SELECT 1 FROM managers WHERE id=?', (manager_id,)).fetchone():
+                return 'ユーザーが見つかりません。', 404
+            if student_id and not conn.execute('SELECT 1 FROM students WHERE student_id=?', (student_id,)).fetchone():
+                return '学籍番号が登録されていません。', 400
+            conn.execute('UPDATE managers SET discord_id=?, student_id=? WHERE id=?', (discord_id, student_id, manager_id))
+            conn.execute('DELETE FROM room_permissions WHERE manager_id=?', (manager_id,))
+            conn.executemany('INSERT INTO room_permissions(manager_id,room) VALUES (?,?)', [(manager_id, x) for x in rooms])
+        return redirect(url_for('access_settings'))
+    with sqlite3.connect(app.config['DATABASE']) as conn:
+        conn.row_factory = sqlite3.Row
+        accounts = [dict(r) for r in conn.execute('SELECT id,username,name,role,discord_id,student_id FROM managers ORDER BY id')]
+        permissions = conn.execute('SELECT manager_id,room FROM room_permissions').fetchall()
+    granted = {}
+    for p in permissions:
+        granted.setdefault(p['manager_id'], set()).add(p['room'])
+    return render_template('access_settings.html', accounts=accounts, rooms=ROOMS, granted=granted,
+                           csrf=session.get('csrf') or init_csrf())
+
+def init_csrf():
+    session['csrf'] = secrets.token_hex(24)
+    return session['csrf']
 
 # --- 承認・却下・削除 ---
 @app.route("/approve/<int:req_id>", methods=["POST"])
@@ -596,8 +754,11 @@ def reject(req_id):
         conn.execute("UPDATE requests SET status='却下' WHERE id=? AND status='申請中'",(req_id,))
     return redirect('/admin')
 
-@app.route("/delete/<int:req_id>")
+@app.route("/delete/<int:req_id>", methods=["POST"])
 def delete(req_id):
+    from rfid_api import valid_csrf
+    if not valid_csrf():
+        return "認証エラー", 403
     if not session.get("logged_in"):
         return redirect("/login")
     conn = sqlite3.connect(app.config["DATABASE"])
