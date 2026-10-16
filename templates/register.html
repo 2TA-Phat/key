@@ -1,69 +1,17 @@
 <!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>生徒新規登録</title>
-
-<style>
-    body { font-family: sans-serif; margin: 0; padding: 15px; background: #f5f5f5; }
-    h2 { font-size: 22px; margin-bottom: 10px; }
-
-    .card {
-        background: #fff;
-        padding: 18px;
-        margin: 12px 0;
-        border-radius: 12px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }
-
-    input {
-        width: 100%;
-        padding: 12px;
-        margin-top: 8px;
-        border-radius: 8px;
-        border: 1px solid #ccc;
-        font-size: 16px;
-    }
-
-    button {
-        width: 100%;
-        padding: 14px;
-        margin-top: 12px;
-        font-size: 18px;
-        border: none;
-        border-radius: 8px;
-        background: #2196F3;
-        color: white;
-    }
-
-    a {
-        text-decoration: none;
-    }
-</style>
-</head>
-
-<body>
-
-<h2>生徒新規登録</h2>
-
-<div class="card">
-    {% if error %}<p style="color:#c21">{{ error }}</p>{% endif %}
-    <form action="/register" method="post">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <label>学籍番号</label><input name="student_id" required>
-        <label>ユーザー名</label><input name="username" minlength="3" maxlength="64" required>
-        <label>メールアドレス</label><input name="email" type="email" required>
-        <label>パスワード（8～15文字）</label><input name="password" type="password" minlength="8" maxlength="15" required>
-        <button type="submit">登録する</button>
-    </form>
-</div>
-
-<div class="card">
-    <a href="/student_submit">
-        <button style="background:#4CAF50;">申請画面へ戻る</button>
-    </a>
-</div>
-
-</body>
-</html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>生徒新規登録</title>
+<style>body{font-family:sans-serif;background:#f5f5f5;margin:0;padding:16px}h2{font-size:22px}.card{background:#fff;border-radius:12px;padding:18px;margin:12px 0;box-shadow:0 2px 5px #0001}label{display:block;margin-top:12px;font-weight:600}input,select{width:100%;box-sizing:border-box;padding:12px;margin-top:7px;border-radius:8px;border:1px solid #ccc;font-size:16px;background:white}button,.back{width:100%;box-sizing:border-box;display:block;text-align:center;padding:14px;margin-top:14px;font-size:18px;border:0;border-radius:8px;background:#2196f3;color:white;text-decoration:none;cursor:pointer}.back{background:#4caf50}.error{color:#c21}.hint{color:#666;font-size:14px}</style></head>
+<body><h2>生徒新規登録</h2><div class="card">
+<p class="hint">登録後、先生の承認が完了するまでログインできません。</p>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<form action="/register" method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label for="student_id">学籍番号</label><input id="student_id" name="student_id" value="{{ (values or {}).get('student_id','') }}" maxlength="30" required>
+<label for="name">名前</label><input id="name" name="name" value="{{ (values or {}).get('name','') }}" maxlength="100" required>
+<label for="username">ユーザー名</label><input id="username" name="username" value="{{ (values or {}).get('username','') }}" minlength="3" maxlength="64" required>
+<label for="department">学科</label><select id="department" name="department" required><option value="">学科を選択してください</option>{% for d in departments %}<option value="{{ d }}" {% if (values or {}).get('department')==d %}selected{% endif %}>{{ d }}</option>{% endfor %}</select>
+<label for="school_class">クラス</label><select id="school_class" name="school_class" required><option value="">クラスを選択してください</option>{% for c in classes %}<option value="{{ c }}" {% if (values or {}).get('school_class')==c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
+<label for="phone">電話番号</label><input id="phone" name="phone" type="tel" inputmode="tel" placeholder="09012345678" value="{{ (values or {}).get('phone','') }}" maxlength="15" required>
+<label for="email">メールアドレス</label><input id="email" name="email" type="email" value="{{ (values or {}).get('email','') }}" required>
+<label for="password">パスワード（8～15文字）</label><input id="password" name="password" type="password" minlength="8" maxlength="15" autocomplete="new-password" required>
+<button type="submit">登録する</button></form></div><div class="card"><a class="back" href="/login">ログイン画面へ戻る</a></div></body></html>

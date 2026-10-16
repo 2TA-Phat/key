@@ -59,6 +59,8 @@
         font-weight: bold; 
         cursor: pointer; 
     }
+    .guest-link { display:block; margin-top:12px; padding:12px; text-align:center; border-radius:6px; background:#eef6ff; color:#086ac1; font-weight:600; text-decoration:none; }
+    .guest-link:hover { background:#dbeeff; }
     .error { 
         color: #d9534f; 
         font-size: 14px; 
@@ -78,10 +80,9 @@
         <input type="text" name="username" required>
         <label>パスワード</label>
         <input type="password" name="password" required>
-        <label>学校から発行された招待コード（生徒のみ・有効期限5分）</label>
-        <input type="text" name="invite" autocomplete="off" placeholder="管理者は入力不要">
         <button type="submit">ログイン</button>
     </form>
+    <a href="/student_submit" class="guest-link">ログインせずに開錠申請</a>
     <p style="text-align:center;margin:20px 0 0"><a href="/register">生徒新規登録</a></p>
 </div>
 </body>

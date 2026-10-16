@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>メニュー選択 | TIST 鍵管理システム</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; font-family: sans-serif; display:flex; align-items:center; justify-content:center; padding:20px;
+    background: #e1e7f5 url("{{ url_for('static', filename='images/Background_login_images.jpg') }}") center/cover fixed no-repeat; }
+  .card { width: min(100%, 410px); padding:34px 30px; background:rgba(255,255,255,.94); border-radius:12px;
+    box-shadow:0 6px 22px rgba(0,0,0,.16); text-align:center; }
+  h1 { font-size:21px; margin:0 0 9px; color:#252d39; }
+  .intro { font-size:14px; color:#586270; margin:0 0 28px; line-height:1.6; }
+  .action { display:block; width:100%; border:0; border-radius:7px; text-decoration:none; padding:15px 10px;
+    font-size:16px; font-weight:bold; margin-top:13px; color:#fff; background:#087cf5; }
+  .action.secondary { background:#e9f3ff; color:#0760b4; }
+  .action:hover { filter:brightness(.96); }
+  .logout { display:inline-block; margin-top:26px; font-size:14px; color:#616d7b; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>TIST 鍵管理システム</h1>
+  <p class="intro">ログインしました。利用する画面を選択してください。</p>
+  <a class="action" href="{{ url_for('admin') }}">管理画面へ進む</a>
+  <a class="action secondary" href="{{ url_for('student_submit') }}">開錠申請画面へ進む</a>
+  <a class="logout" href="{{ url_for('logout') }}">ログアウト</a>
+</main>
+</body>
+</html>

@@ -277,6 +277,12 @@
                             Operator
                         </option>
 
+                        <option 
+                            value="Student"
+                            {% if manager.role == 'Student' %}selected{% endif %}
+                        >    
+                            Student
+                        </option>
                     </select>
 
                 </div>

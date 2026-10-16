@@ -85,7 +85,7 @@ def init_db():
         cur.execute("ALTER TABLE requests ADD COLUMN source TEXT NOT NULL DEFAULT 'Web申請'")
     cur.execute("PRAGMA table_info(managers)")
     mcols = {r[1] for r in cur.fetchall()}
-    for field in ("phone", "student_id"):
+    for field in ("phone", "student_id", "department", "school_class"):
         if field not in mcols:
             cur.execute(f"ALTER TABLE managers ADD COLUMN {field} TEXT")
     cur.execute("""CREATE TABLE IF NOT EXISTS room_permissions (
@@ -112,6 +112,17 @@ def init_db():
         expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
         last_sent_at INTEGER NOT NULL, invite_hash TEXT NOT NULL
     )""")
+    # Guest requests are never authenticated or automatically executed.
+    cur.execute("PRAGMA table_info(requests)")
+    request_cols = {row[1] for row in cur.fetchall()}
+    if 'guest_name' not in request_cols:
+        cur.execute("ALTER TABLE requests ADD COLUMN guest_name TEXT")
+    cur.execute("""CREATE TABLE IF NOT EXISTS guest_request_limits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ip_address TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+    )""")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_guest_limits_time ON guest_request_limits(created_at)")
     conn.commit()
     conn.close()
 
@@ -119,28 +130,73 @@ init_db()
 initialize(app.config["DATABASE"])
 
 # Gmail SMTP: application password via environment, not source control.
-def email_send_otp(address, code, purpose='ログイン'):
-    gmail = os.environ.get('TIST_SMTP_EMAIL', '').strip()
-    app_password = os.environ.get('TIST_SMTP_APP_PASSWORD', '').replace(' ', '')
-    if not gmail or not app_password:
-        app.logger.error('Gmail SMTP is not configured')
-        return False
-    message = EmailMessage()
-    message['From'] = gmail
-    message['To'] = address
-    message['Subject'] = f'【TIST 鍵管理システム】{purpose}認証コード'
-    message.set_content(f'認証コード：{code}\n有効期限：5分\nこのコードを他人に教えないでください。')
+
+def email_send_otp(address, code, purpose="ログイン"):
+    import base64
+    from pathlib import Path
+    from email.message import EmailMessage
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+
+    token_file = (
+        Path(__file__).resolve().parent
+        / "secrets" / "gmail_token.json"
+    )
+
+    scopes = [
+        "https://www.googleapis.com/auth/gmail.send"
+    ]
+
     try:
-        with smtplib.SMTP('smtp.gmail.com', 587, timeout=12) as smtp:
-            smtp.ehlo()
-            smtp.starttls(context=ssl.create_default_context())
-            smtp.ehlo()
-            smtp.login(gmail, app_password)
-            smtp.send_message(message)
+        credentials = Credentials.from_authorized_user_file(
+            str(token_file), scopes
+        )
+
+        if credentials.expired and credentials.refresh_token:
+            credentials.refresh(Request())
+            token_file.write_text(
+                credentials.to_json(),
+                encoding="utf-8"
+            )
+
+        if not credentials.valid:
+            raise RuntimeError("Gmail OAuth credentials invalid")
+
+        message = EmailMessage()
+        message["From"] = "uongtriphat.wall@gmail.com"
+        message["To"] = address
+        message["Subject"] = (
+            f"【TIST 鍵管理システム】{purpose}認証コード"
+        )
+        message.set_content(
+            f"認証コード：{code}\n"
+            "有効期限：5分\n"
+            "このコードを他人に教えないでください。"
+        )
+
+        raw = base64.urlsafe_b64encode(
+            message.as_bytes()
+        ).decode("ascii")
+
+        service = build(
+            "gmail", "v1",
+            credentials=credentials,
+            cache_discovery=False
+        )
+
+        service.users().messages().send(
+            userId="me",
+            body={"raw": raw}
+        ).execute()
+
+        app.logger.info("Gmail API OTP sent successfully")
         return True
-    except (smtplib.SMTPException, OSError):
-        app.logger.exception('OTP mail delivery failed')
+
+    except Exception:
+        app.logger.exception("Gmail API OTP delivery failed")
         return False
+
 
 def invite_hash(value):
     return hmac.new(app.secret_key.encode(), ('invite:' + value).encode(), hashlib.sha256).hexdigest()
@@ -175,23 +231,27 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        invitation = request.form.get('invite', '').strip()
         with sqlite3.connect(app.config['DATABASE']) as conn:
             conn.row_factory = sqlite3.Row
-            manager = conn.execute("SELECT * FROM managers WHERE username=? AND status IN ('有効','メール未確認')", (username,)).fetchone()
+            manager = conn.execute("SELECT * FROM managers WHERE username=?", (username,)).fetchone()
             if not (manager and manager['password'] and check_password_hash(manager['password'], password)):
                 return render_template('login.html', error='ユーザー名またはパスワードが違います。'), 401
-            if manager['status'] == 'メール未確認' and manager['role'] != 'Student':
-                return render_template('login.html', error='アカウントを確認できません。'), 403
-            # School-issued invitation is required for student accounts at login, not at registration.
+            if manager['status'] == '承認待ち':
+                return render_template('login.html', error='先生の承認待ちです。承認後にログインできます。'), 403
+            if manager['status'] != '有効':
+                return render_template('login.html', error='このアカウントは現在利用できません。'), 403
+            # Only the exact Administrator role may use the requested password-only login.
+            # Other roles continue to require their email OTP.
+            if manager['role'] == 'Administrator':
+                session.clear()
+                session.update(logged_in=True, manager_id=manager['id'],
+                               username=manager['username'], name=manager['name'],
+                               role=manager['role'], student_id=manager['student_id'],
+                               otp_verified=True)
+                session['csrf'] = secrets.token_hex(24)
+                return redirect(url_for('admin_choice'))
+            # Teachers approve new students; no invitation code is required.
             now = int(time.time())
-            if manager['role'] == 'Student':
-                invite = conn.execute('SELECT * FROM enrollment_invites WHERE student_id=?',
-                                      (manager['student_id'],)).fetchone()
-                if (not invitation or not invite or invite['used_at'] is not None
-                        or invite['expires_at'] < now
-                        or not hmac.compare_digest(invite['token_hash'], invite_hash(invitation))):
-                    return render_template('login.html', error='招待コードが無効または期限切れです。学校から新しいコードを取得してください。'), 403
             if not manager['email'] or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', manager['email']):
                 return render_template('login.html', error='メールアドレスが未登録です。管理者にお問い合わせください。'), 400
             conn.execute('BEGIN IMMEDIATE')
@@ -207,8 +267,6 @@ def login():
                          (manager['id'], make_otp_hash(manager['id'], code), now + 300, 0, now))
             session.clear()
             session['pending_manager_id'] = manager['id']
-            if manager['role'] == 'Student':
-                session['pending_invite_hash'] = invite['token_hash']
             session['otp_session_expires'] = now + 300
             return redirect(url_for('verify_otp'))
     return render_template('login.html')
@@ -228,7 +286,7 @@ def verify_otp():
             conn.row_factory = sqlite3.Row
             conn.execute('BEGIN IMMEDIATE')
             otp = conn.execute('SELECT * FROM login_otp WHERE manager_id=?', (manager_id,)).fetchone()
-            manager = conn.execute("SELECT * FROM managers WHERE id=? AND status IN ('有効','メール未確認')", (manager_id,)).fetchone()
+            manager = conn.execute("SELECT * FROM managers WHERE id=? AND status='有効'", (manager_id,)).fetchone()
             if not manager or not otp or now > otp['expires_at'] or otp['attempts'] >= 5:
                 conn.execute('DELETE FROM login_otp WHERE manager_id=?', (manager_id,))
                 session.clear()
@@ -240,20 +298,6 @@ def verify_otp():
                     session.clear()
                     return render_template('login.html', error='認証回数の上限に達しました。'), 429
                 return render_template('verify_otp.html', error='認証コードが正しくありません。'), 401
-            if manager['role'] == 'Student':
-                invite = conn.execute('SELECT * FROM enrollment_invites WHERE student_id=?',
-                                      (manager['student_id'],)).fetchone()
-                expected_invite_hash = session.get('pending_invite_hash', '')
-                if (not invite or invite['used_at'] is not None or now > invite['expires_at']
-                        or not expected_invite_hash
-                        or not hmac.compare_digest(invite['token_hash'], expected_invite_hash)):
-                    conn.execute('DELETE FROM login_otp WHERE manager_id=?', (manager_id,))
-                    session.clear()
-                    return render_template('login.html', error='招待コードの有効期限が切れました。再度ログインしてください。'), 403
-                conn.execute('UPDATE enrollment_invites SET used_at=? WHERE student_id=?',
-                             (now, manager['student_id']))
-            if manager['role'] == 'Student' and manager['status'] == 'メール未確認':
-                conn.execute("UPDATE managers SET status='有効' WHERE id=? AND status='メール未確認'", (manager_id,))
             conn.execute('DELETE FROM login_otp WHERE manager_id=?', (manager_id,))
         session.clear()
         session.update(logged_in=True, manager_id=manager['id'], username=manager['username'],
@@ -261,6 +305,14 @@ def verify_otp():
         session['csrf'] = secrets.token_hex(24)
         return redirect(url_for('admin') if is_admin() else url_for('student_submit'))
     return render_template('verify_otp.html')
+
+@app.route('/admin/choose', methods=['GET'])
+def admin_choice():
+    # Only an authenticated and active Administrator may use this landing page.
+    if not (session.get('logged_in') and session.get('otp_verified')
+            and session.get('role') == 'Administrator'):
+        return redirect(url_for('login')) if not session.get('logged_in') else ('アクセス権限がありません。', 403)
+    return render_template('admin_choice.html')
 
 @app.route('/logout')
 def logout():
@@ -274,51 +326,85 @@ def index():
 
 @app.route('/student_submit', methods=['GET', 'POST'])
 def student_submit():
+    authenticated = bool(session.get('logged_in') and session.get('otp_verified'))
+    if 'csrf' not in session:
+        session['csrf'] = secrets.token_hex(24)
     if request.method == 'GET':
-        if not session.get('logged_in') or not session.get('otp_verified'):
-            return redirect(url_for('login'))
-        if session.get('logged_in') and not session.get('csrf'):
-            session['csrf'] = secrets.token_hex(24)
         return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
-                               authenticated=bool(session.get('logged_in') and session.get('otp_verified')),
-                               student_id=session.get('student_id', ''))
-    if not session.get('logged_in') or not session.get('otp_verified'):
-        return redirect(url_for('login'))
+                               authenticated=authenticated,
+                               student_id=session.get('student_id', '') if authenticated else '')
+
+    if not hmac.compare_digest(request.form.get('csrf', ''), session.get('csrf', '')):
+        return '認証エラー', 403
     student_id = request.form.get('student_id', '').strip()
+    guest_name = request.form.get('guest_name', '').strip()
     key = request.form.get('key', '').strip()
     action = request.form.get('action', '').strip()
     if key not in ROOMS or action not in ACTIONS:
         return '教室または操作の指定が正しくありません。', 400
-    authed = bool(session.get('logged_in') and session.get('otp_verified'))
-    if not hmac.compare_digest(request.form.get('csrf', ''), session.get('csrf', '')):
-        return '認証エラー', 403
-    if authed and not is_admin():
+
+    if authenticated and not is_admin():
         if not session.get('student_id'):
             return '学籍番号がアカウントに設定されていません。', 403
         student_id = session['student_id']
-    with sqlite3.connect(app.config['DATABASE']) as conn:
+    if not re.fullmatch(r'[0-9A-Za-z-]{3,30}', student_id):
+        return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
+                               authenticated=authenticated, student_id=student_id,
+                               error='学籍番号を正しく入力してください。'), 400
+    if not authenticated and (not 1 <= len(guest_name) <= 100 or any(ord(c) < 32 for c in guest_name)):
+        return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
+                               authenticated=False, student_id=student_id,
+                               error='名前を正しく入力してください。'), 400
+
+    with sqlite3.connect(app.config['DATABASE'], timeout=15) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute('BEGIN IMMEDIATE')
-        student = conn.execute('SELECT student_id FROM students WHERE student_id=?', (student_id,)).fetchone()
+        # For unauthenticated use, validate against the school roster or a
+        # registered student account; a guest cannot create a student identity here.
+        student = conn.execute('SELECT student_id FROM students WHERE student_id=?',
+                               (student_id,)).fetchone()
+        if not student and not authenticated:
+            student = conn.execute("SELECT student_id FROM managers WHERE student_id=? AND role='Student'",
+                                   (student_id,)).fetchone()
         if not student:
             return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
-                                   authenticated=authed, student_id=student_id,
-                                   error='学籍番号が登録されていません。'), 400
+                                   authenticated=authenticated, student_id=student_id,
+                                   error='学籍番号が確認できません。教員にお問い合わせください。'), 400
+
+        if not authenticated:
+            # Limit abusive submissions from the same source (max 5/hour).
+            now_epoch = int(time.time())
+            ip = request.remote_addr or 'unknown'
+            conn.execute('DELETE FROM guest_request_limits WHERE created_at < ?', (now_epoch - 86400,))
+            count = conn.execute('SELECT COUNT(*) FROM guest_request_limits WHERE ip_address=? AND created_at>=?',
+                                 (ip, now_epoch - 3600)).fetchone()[0]
+            if count >= 5:
+                return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
+                                       authenticated=False, student_id=student_id,
+                                       error='申請回数の上限に達しました。時間をおいてお試しください。'), 429
+            conn.execute('INSERT INTO guest_request_limits(ip_address,created_at) VALUES (?,?)',
+                         (ip, now_epoch))
+
         instant = False
-        if authed and (not is_admin() or session.get('student_id') == student_id):
+        if authenticated and (not is_admin() or session.get('student_id') == student_id):
             permission = conn.execute('SELECT 1 FROM room_permissions WHERE manager_id=? AND room=?',
                                       (session['manager_id'], key)).fetchone()
             instant = bool(permission)
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        cur = conn.execute("INSERT INTO requests (student_id, key, action, status, time, source) VALUES (?, ?, ?, '申請中', ?, ?)",
-                           (student_id, key, action, now, '認証済Web申請' if authed else 'Web申請'))
+        source = '認証済Web申請' if authenticated else '未認証Web申請'
+        cur = conn.execute("""INSERT INTO requests(student_id,key,action,status,time,source,guest_name)
+                              VALUES (?,?,?,'申請中',?,?,?)""",
+                           (student_id, key, action, now, source, guest_name if not authenticated else None))
+        # Guest requests never call issue_command, even if the student has other permissions.
         if instant:
-            conn.execute("UPDATE requests SET status='承認', approved_at=?, execution_status='待機中' WHERE id=?",
+            conn.execute("UPDATE requests SET status='承認',approved_at=?,execution_status='待機中' WHERE id=?",
                          (now, cur.lastrowid))
             issue_command(conn, key, action, 'verified_user', student_id, cur.lastrowid)
+    session['csrf'] = secrets.token_hex(24)
     return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
-                           authenticated=authed, student_id=student_id, sent=True,
-                           message='開錠指令を送信しました。装置の応答をお待ちください。' if instant else '申請を受け付けました。教員の承認をお待ちください。')
+                           authenticated=authenticated, student_id=student_id, sent=True,
+                           message='開錠指令を送信しました。装置の応答をお待ちください。' if instant
+                                   else '申請を受け付けました。教員の承認をお待ちください。')
 
 @app.route("/status", methods=["POST"])
 def status():
@@ -342,39 +428,101 @@ def status():
 
     return render_template("student.html", results=results)
 
+DEPARTMENTS = (
+    'こども未来学科', '医療・ビジネス学科', '建築環境学科',
+    '自動車整備工学科', 'ITデジタル学科'
+)
+SCHOOL_CLASSES = ('1TA', '1TB', '1TE', '2TA', '2TB', '2TE', '3TA', '3TB', '3TE')
+
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'GET':
         session['register_csrf'] = secrets.token_hex(24)
-        return render_template('register.html', csrf=session['register_csrf'])
+        return render_template('register.html', csrf=session['register_csrf'],
+                               departments=DEPARTMENTS, classes=SCHOOL_CLASSES)
     if not session.get('register_csrf') or not hmac.compare_digest(request.form.get('csrf', ''), session['register_csrf']):
         return '認証エラー', 403
     student_id = request.form.get('student_id', '').strip()
     username = request.form.get('username', '').strip()
+    name = request.form.get('name', '').strip()
+    department = request.form.get('department', '').strip()
+    school_class = request.form.get('school_class', '').strip()
+    phone = request.form.get('phone', '').strip()
     email = request.form.get('email', '').strip().lower()
     password = request.form.get('password', '')
-    def invalid(message, status=400):
-        return render_template('register.html', error=message, csrf=session['register_csrf']), status
-    if (not re.fullmatch(r'[A-Za-z0-9_-]{3,64}', username)
-            or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email)
-            or len(email) > 254 or len(password) < 8 or len(password) > 15
-            or not student_id):
-        return invalid('入力内容をご確認ください。パスワードは8～15文字にしてください。')
-    # Create an inactive account. Email is verified during the FIRST login OTP.
-    # A student must already exist in the school-controlled students table.
+    def invalid(message):
+        values = {k: request.form.get(k, '') for k in ('student_id','username','name','department','school_class','phone','email')}
+        return render_template('register.html', error=message, csrf=session['register_csrf'],
+                               departments=DEPARTMENTS, classes=SCHOOL_CLASSES, values=values), 400
+    if not re.fullmatch(r'[0-9A-Za-z-]{3,30}', student_id):
+        return invalid('学籍番号を正しく入力してください。')
+    if not (3 <= len(username) <= 64) or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in username):
+        return invalid('ユーザー名は空白を含まない3～64文字で入力してください。')
+    if not (1 <= len(name) <= 100):
+        return invalid('名前を入力してください。')
+    if department not in DEPARTMENTS or school_class not in SCHOOL_CLASSES:
+        return invalid('学科とクラスを選択してください。')
+    if not re.fullmatch(r'[0-9-]{10,15}', phone) or len(phone.replace('-', '')) not in (10,11):
+        return invalid('電話番号は10～11桁の数字で入力してください。')
+    if len(email) > 254 or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email):
+        return invalid('メールアドレスの形式をご確認ください。')
+    if not 8 <= len(password) <= 15:
+        return invalid('パスワードは8～15文字にしてください。')
     with sqlite3.connect(app.config['DATABASE'], timeout=15) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute('BEGIN IMMEDIATE')
-        student = conn.execute('SELECT student_id,name FROM students WHERE student_id=?', (student_id,)).fetchone()
         claimed = conn.execute('SELECT 1 FROM managers WHERE student_id=? OR username=? OR lower(email)=?',
-                               (student_id,username,email)).fetchone()
-        if not student or claimed:
-            return invalid('登録できません。学籍番号またはアカウント情報をご確認ください。')
-        conn.execute("""INSERT INTO managers (username,password,name,email,role,status,student_id)
-                        VALUES (?,?,?,?,'Student','メール未確認',?)""",
-                     (username,generate_password_hash(password),student['name'],email,student_id))
-    session.pop('register_csrf',None)
-    return render_template('registration_complete.html')
+                               (student_id, username, email)).fetchone()
+        if claimed:
+            return invalid('学籍番号、ユーザー名、またはメールアドレスは既に登録されています。')
+        try:
+            conn.execute("""INSERT INTO managers
+                (username,password,name,email,phone,department,school_class,role,status,student_id)
+                VALUES (?,?,?,?,?,?,?,'Student','承認待ち',?)""",
+                (username, generate_password_hash(password), name, email, phone,
+                 department, school_class, student_id))
+        except sqlite3.IntegrityError:
+            return invalid('既に登録されている情報があります。')
+    session.pop('register_csrf', None)
+    return render_template('registration_pending.html')
+
+@app.route('/admin/student-approvals', methods=['GET', 'POST'])
+def student_approvals():
+    if not session.get('logged_in') or not session.get('otp_verified') or session.get('role') not in {'Administrator', 'Admin', '管理者', '教員', 'Teacher'}:
+        return 'アクセス権限がありません。', 403
+    if 'csrf' not in session:
+        session['csrf'] = secrets.token_hex(24)
+    error = None
+    if request.method == 'POST':
+        if not hmac.compare_digest(request.form.get('csrf', ''), session['csrf']):
+            return '認証エラー', 403
+        manager_id = request.form.get('manager_id', type=int)
+        action = request.form.get('action', '')
+        if not manager_id or action not in ('approve','reject'):
+            return '入力内容が不正です。', 400
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute('BEGIN IMMEDIATE')
+            user = conn.execute("SELECT * FROM managers WHERE id=? AND role='Student' AND status='承認待ち'", (manager_id,)).fetchone()
+            if not user:
+                error = '対象の申請が見つかりません。'
+            elif action == 'approve':
+                existing = conn.execute('SELECT 1 FROM students WHERE student_id=?', (user['student_id'],)).fetchone()
+                if existing:
+                    error = '学籍番号が既に学生台帳にあります。管理者が確認してください。'
+                else:
+                    conn.execute('INSERT INTO students(student_id,name,department,course,class) VALUES(?,?,?,?,?)',
+                                 (user['student_id'],user['name'],user['department'], '',user['school_class']))
+                    conn.execute("UPDATE managers SET status='有効' WHERE id=?", (manager_id,))
+            else:
+                conn.execute("UPDATE managers SET status='却下' WHERE id=?", (manager_id,))
+        if not error:
+            return redirect(url_for('student_approvals'))
+    with sqlite3.connect(app.config['DATABASE']) as conn:
+        conn.row_factory = sqlite3.Row
+        pending = conn.execute("""SELECT id,student_id,username,name,department,school_class,phone,email
+            FROM managers WHERE role='Student' AND status='承認待ち' ORDER BY id""").fetchall()
+    return render_template('student_approvals.html', pending=pending, csrf=session['csrf'], error=error)
 
 # --- ユーザー画面 ---
 @app.route("/users")
@@ -423,7 +571,7 @@ def users():
     sql = """
         SELECT
             s.student_id AS contact_id,
-            s.name, s.department, s.course, s.class, s.number,
+            COALESCE(NULLIF(r.guest_name, ''), s.name) AS name, s.department, s.course, s.class, s.number,
             MIN(r.time) AS first_login,
             MAX(r.time) AS last_login,
             SUM(CASE WHEN r.status = '申請中' THEN 1 ELSE 0 END) AS pending_count,
@@ -492,7 +640,7 @@ def admin():
 
     cur.execute("""
         SELECT r.id, r.student_id, r.key, r.action, r.status, r.time, r.source, r.execution_status,
-               s.name, s.department, s.course, s.class, s.number
+               COALESCE(NULLIF(r.guest_name, ''), s.name) AS name, s.department, s.course, s.class, s.number
         FROM requests r
         LEFT JOIN students s ON r.student_id = s.student_id
         WHERE r.status='申請中'
@@ -502,7 +650,7 @@ def admin():
 
     cur.execute("""
         SELECT r.id, r.student_id, r.key, r.action, r.status, r.time, r.source, r.execution_status,
-               s.name, s.department, s.course, s.class, s.number
+               COALESCE(NULLIF(r.guest_name, ''), s.name) AS name, s.department, s.course, s.class, s.number
         FROM requests r
         LEFT JOIN students s ON r.student_id = s.student_id
         WHERE r.status!='申請中'
