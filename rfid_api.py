@@ -9,9 +9,11 @@ from functools import wraps
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request, session
 
 rfid_api = Blueprint('rfid_api', __name__)
-ROOMS = ('1TA', '2TA', '2TB', '3TE')
+ROOMS = ('1TA', '2TA')
+ROOM_DEVICE = {'1TA': 'esp32-01', '2TA': 'esp32-02'}
+DEVICES = tuple(ROOM_DEVICE.values())
 ACTIONS = ('開ける', '閉める')
-DEVICE = 'esp32-01'
+# Each room is controlled exclusively by its designated device.
 
 def timestamp():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -42,6 +44,9 @@ def initialize(db_path):
             created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
             delivered_at TEXT, finished_at TEXT,
             FOREIGN KEY(request_id) REFERENCES requests(id))''')
+        con.execute("""UPDATE device_commands SET device_id = CASE room
+            WHEN '1TA' THEN 'esp32-01' WHEN '2TA' THEN 'esp32-02' ELSE device_id END
+            WHERE state='pending' AND room IN ('1TA','2TA')""")
         con.execute('''CREATE TABLE IF NOT EXISTS access_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_at TEXT NOT NULL, device_id TEXT, uid TEXT,
@@ -59,13 +64,22 @@ def normalize_uid(s):
 def auth_device(fn):
     @wraps(fn)
     def wrapped(*a, **kw):
-        expected = os.environ.get('TIST_DEVICE_TOKEN', '')
-        token = request.headers.get('X-Device-Token', '')
         device = request.headers.get('X-Device-ID', '')
-        if not expected or not hmac.compare_digest(expected, token) or device != DEVICE:
+        # A unique token must be provisioned for each physical controller.
+        tokens = {
+            'esp32-01': os.environ.get('TIST_DEVICE_TOKEN_01') or os.environ.get('TIST_DEVICE_TOKEN', ''),
+            'esp32-02': os.environ.get('TIST_DEVICE_TOKEN_02', ''),
+        }
+        expected = tokens.get(device, '')
+        token = request.headers.get('X-Device-Token', '')
+        if not expected or not hmac.compare_digest(expected, token):
             return jsonify(error='unauthorized'), 401
         return fn(*a, **kw)
     return wrapped
+
+
+def calling_device():
+    return request.headers['X-Device-ID']
 
 def admin_only(fn):
     @wraps(fn)
@@ -81,12 +95,15 @@ def valid_csrf():
     return bool(expected) and hmac.compare_digest(expected, actual)
 
 def issue_command(con, room, action, source, student_id=None, req_id=None):
+    if room not in ROOM_DEVICE:
+        raise ValueError('Room has no assigned controller')
+    device_id = ROOM_DEVICE[room]
     now = datetime.now()
     expires = (now + timedelta(seconds=20)).strftime('%Y-%m-%d %H:%M:%S')
     cur = con.execute('''INSERT INTO device_commands
         (request_id,device_id,room,action,source,student_id,state,created_at,expires_at)
         VALUES (?,?,?,?,?,?,'pending',?,?)''',
-        (req_id, DEVICE, room, action, source, student_id,
+        (req_id, device_id, room, action, source, student_id,
          now.strftime('%Y-%m-%d %H:%M:%S'), expires))
     return cur.lastrowid
 
@@ -139,7 +156,7 @@ def scan_card():
     data = request.get_json(silent=True) or {}
     uid = normalize_uid(data.get('uid'))
     room = data.get('room')
-    if not uid or room not in ROOMS:
+    if not uid or room not in ROOMS or ROOM_DEVICE.get(room) != calling_device():
         return jsonify(allowed=False,reason='invalid_input'),400
     with db() as con:
         con.execute('BEGIN IMMEDIATE')
@@ -149,7 +166,7 @@ def scan_card():
             (room,uid,datetime.now().strftime('%Y-%m-%d'))).fetchone()
         if not card:
             con.execute('INSERT INTO access_events(event_at,device_id,uid,room,event_type,detail) VALUES(?,?,?,?,?,?)',
-                        (timestamp(),DEVICE,uid,room,'rfid_denied','card_not_authorized'))
+                        (timestamp(),calling_device(),uid,room,'rfid_denied','card_not_authorized'))
             return jsonify(allowed=False,reason='card_not_authorized'),403
         student_id = card['student_id']
         if card['mode'] == 'approval':
@@ -163,7 +180,7 @@ def scan_card():
                     VALUES(?,?,'開ける','申請中',?,'カード')''',(student_id,room,timestamp()))
                 req_id = cur.lastrowid
             con.execute('''INSERT INTO access_events(event_at,device_id,uid,student_id,room,event_type,detail)
-                VALUES(?,?,?,?,?,?,?)''',(timestamp(),DEVICE,uid,student_id,room,'rfid_pending',str(req_id)))
+                VALUES(?,?,?,?,?,?,?)''',(timestamp(),calling_device(),uid,student_id,room,'rfid_pending',str(req_id)))
             return jsonify(allowed=False,requires_approval=True,request_id=req_id,reason='waiting_teacher_approval')
         # Record the direct card action in the same requests table used by /admin.
         req_cur = con.execute('''INSERT INTO requests(student_id,key,action,status,time,source)
@@ -172,7 +189,7 @@ def scan_card():
         con.execute("UPDATE requests SET approved_at=?, execution_status='実行待ち' WHERE id=?", (timestamp(), req_id))
         command_id = issue_command(con,room,'開ける','rfid_direct',student_id=student_id,req_id=req_id)
         con.execute('''INSERT INTO access_events(event_at,device_id,uid,student_id,room,event_type,detail)
-            VALUES(?,?,?,?,?,?,?)''',(timestamp(),DEVICE,uid,student_id,room,'rfid_allowed',str(command_id)))
+            VALUES(?,?,?,?,?,?,?)''',(timestamp(),calling_device(),uid,student_id,room,'rfid_allowed',str(command_id)))
         row = con.execute('SELECT * FROM device_commands WHERE id=?',(command_id,)).fetchone()
         # The response itself is the delivery for direct RFID commands.
         con.execute("UPDATE device_commands SET state='delivered',delivered_at=? WHERE id=?",(timestamp(),command_id))
@@ -185,9 +202,11 @@ def get_command():
         con.execute('BEGIN IMMEDIATE')
         con.execute("UPDATE device_commands SET state='expired' WHERE state='pending' AND expires_at < ?",(timestamp(),))
         row = con.execute('''SELECT * FROM device_commands WHERE state='pending'
-            AND device_id=? AND expires_at>=? ORDER BY id LIMIT 1''',(DEVICE,timestamp())).fetchone()
+            AND device_id=? AND expires_at>=? ORDER BY id LIMIT 1''',(calling_device(),timestamp())).fetchone()
         if row is None:
             return jsonify(has_command=False)
+        if ROOM_DEVICE.get(row['room']) != calling_device():
+            return jsonify(error='device_room_mismatch'), 403
         con.execute("UPDATE device_commands SET state='delivered',delivered_at=? WHERE id=?",(timestamp(),row['id']))
         return jsonify(has_command=True,**as_instruction(row))
 
@@ -204,9 +223,11 @@ def result():
         return jsonify(error='invalid_result'),400
     with db() as con:
         con.execute('BEGIN IMMEDIATE')
-        row = con.execute('SELECT * FROM device_commands WHERE id=? AND device_id=?',(command_id,DEVICE)).fetchone()
+        row = con.execute('SELECT * FROM device_commands WHERE id=? AND device_id=?',(command_id,calling_device())).fetchone()
         if not row:
             return jsonify(error='not_found'),404
+        if ROOM_DEVICE.get(row['room']) != calling_device():
+            return jsonify(error='device_room_mismatch'),403
         if row['state'] in ('issued','failed'):
             return jsonify(ok=True,already_reported=True)
         if row['state'] != 'delivered':
@@ -216,7 +237,7 @@ def result():
             con.execute('UPDATE requests SET executed_at=?, execution_status=? WHERE id=?',
                         (timestamp(),'指令送信済み' if outcome=='issued' else '実行失敗',row['request_id']))
         con.execute('''INSERT INTO access_events(event_at,device_id,student_id,room,event_type,detail)
-                       VALUES(?,?,?,?,?,?)''',(timestamp(),DEVICE,row['student_id'],row['room'],'device_result',f'{command_id}:{outcome}'))
+                       VALUES(?,?,?,?,?,?)''',(timestamp(),calling_device(),row['student_id'],row['room'],'device_result',f'{command_id}:{outcome}'))
     return jsonify(ok=True)
 
 @rfid_api.post('/api/device/heartbeat')
@@ -224,5 +245,5 @@ def result():
 def heartbeat():
     with db() as con:
         con.execute('''INSERT INTO access_events(event_at,device_id,event_type,detail) VALUES(?,?,?,?)''',
-                    (timestamp(),DEVICE,'heartbeat','online'))
+                    (timestamp(),calling_device(),'heartbeat','online'))
     return jsonify(ok=True)

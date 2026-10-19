@@ -10,6 +10,8 @@
 <label for="name">名前</label><input id="name" name="name" value="{{ (values or {}).get('name','') }}" maxlength="100" required>
 <label for="username">ユーザー名</label><input id="username" name="username" value="{{ (values or {}).get('username','') }}" minlength="3" maxlength="64" required>
 <label for="department">学科</label><select id="department" name="department" required><option value="">学科を選択してください</option>{% for d in departments %}<option value="{{ d }}" {% if (values or {}).get('department')==d %}selected{% endif %}>{{ d }}</option>{% endfor %}</select>
+<label for="course">コース</label><input id="course" name="course" value="{{ (values or {}).get('course','') }}" maxlength="100" placeholder="例：ロボット・IoT" required>
+<label for="number">出席番号</label><input id="number" name="number" type="number" min="1" max="99" step="1" value="{{ (values or {}).get('number','') }}" placeholder="例：18" required>
 <label for="school_class">クラス</label><select id="school_class" name="school_class" required><option value="">クラスを選択してください</option>{% for c in classes %}<option value="{{ c }}" {% if (values or {}).get('school_class')==c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
 <label for="phone">電話番号</label><input id="phone" name="phone" type="tel" inputmode="tel" placeholder="09012345678" value="{{ (values or {}).get('phone','') }}" maxlength="15" required>
 <label for="email">メールアドレス</label><input id="email" name="email" type="email" value="{{ (values or {}).get('email','') }}" required>

@@ -14,7 +14,7 @@ import ssl
 from email.message import EmailMessage
 
 from flask import Flask, request, redirect, render_template, session, url_for
-from rfid_api import rfid_api, initialize, issue_command, ROOMS, ACTIONS
+from rfid_api import rfid_api, initialize, issue_command, ROOMS, ACTIONS, ROOM_DEVICE
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -85,9 +85,11 @@ def init_db():
         cur.execute("ALTER TABLE requests ADD COLUMN source TEXT NOT NULL DEFAULT 'Web申請'")
     cur.execute("PRAGMA table_info(managers)")
     mcols = {r[1] for r in cur.fetchall()}
-    for field in ("phone", "student_id", "department", "school_class"):
+    for field in ("phone", "student_id", "department", "school_class", "course"):
         if field not in mcols:
             cur.execute(f"ALTER TABLE managers ADD COLUMN {field} TEXT")
+    if "number" not in mcols:
+        cur.execute("ALTER TABLE managers ADD COLUMN number INTEGER")
     cur.execute("""CREATE TABLE IF NOT EXISTS room_permissions (
         manager_id INTEGER NOT NULL,
         room TEXT NOT NULL,
@@ -327,84 +329,93 @@ def index():
 @app.route('/student_submit', methods=['GET', 'POST'])
 def student_submit():
     authenticated = bool(session.get('logged_in') and session.get('otp_verified'))
+    teacher = authenticated and is_admin()
     if 'csrf' not in session:
         session['csrf'] = secrets.token_hex(24)
-    if request.method == 'GET':
-        return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
-                               authenticated=authenticated,
-                               student_id=session.get('student_id', '') if authenticated else '')
 
+    # A teacher number must be stored on the authenticated account; if absent,
+    # use the account username as an identifier, without treating it as a verified staff ID.
+    account_identifier = ((session.get('student_id') or session.get('username') or '').strip()
+                          if teacher else (session.get('student_id') or '').strip())
+    def page(status=200, **kwargs):
+        context = dict(rooms=ROOMS, actions=ACTIONS, authenticated=authenticated,
+                       teacher=teacher, student_id=account_identifier)
+        context.update(kwargs)
+        return render_template('student.html', **context), status
+
+    if request.method == 'GET':
+        return page()[0]
     if not hmac.compare_digest(request.form.get('csrf', ''), session.get('csrf', '')):
         return '認証エラー', 403
-    student_id = request.form.get('student_id', '').strip()
+
+    requested_id = request.form.get('student_id', '').strip()
     guest_name = request.form.get('guest_name', '').strip()
-    key = request.form.get('key', '').strip()
+    room = request.form.get('key', '').strip()
     action = request.form.get('action', '').strip()
-    if key not in ROOMS or action not in ACTIONS:
+    if room not in ROOMS or action not in ACTIONS:
         return '教室または操作の指定が正しくありません。', 400
 
-    if authenticated and not is_admin():
-        if not session.get('student_id'):
-            return '学籍番号がアカウントに設定されていません。', 403
-        student_id = session['student_id']
-    if not re.fullmatch(r'[0-9A-Za-z-]{3,30}', student_id):
-        return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
-                               authenticated=authenticated, student_id=student_id,
-                               error='学籍番号を正しく入力してください。'), 400
+    # Never trust a client-supplied identifier for an authenticated user.
+    identifier = account_identifier if authenticated else requested_id
+    if authenticated and not identifier:
+        return page(403, error='アカウントに番号が登録されていません。管理者にお問い合わせください。')
+    if not re.fullmatch(r'[0-9A-Za-z_-]{3,64}', identifier):
+        return page(400, student_id=identifier,
+                    error=('先生番号' if teacher else '学籍番号') + 'を正しく入力してください。')
     if not authenticated and (not 1 <= len(guest_name) <= 100 or any(ord(c) < 32 for c in guest_name)):
-        return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
-                               authenticated=False, student_id=student_id,
-                               error='名前を正しく入力してください。'), 400
+        return page(400, student_id=identifier, error='名前を正しく入力してください。')
 
     with sqlite3.connect(app.config['DATABASE'], timeout=15) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute('BEGIN IMMEDIATE')
-        # For unauthenticated use, validate against the school roster or a
-        # registered student account; a guest cannot create a student identity here.
-        student = conn.execute('SELECT student_id FROM students WHERE student_id=?',
-                               (student_id,)).fetchone()
-        if not student and not authenticated:
-            student = conn.execute("SELECT student_id FROM managers WHERE student_id=? AND role='Student'",
-                                   (student_id,)).fetchone()
-        if not student:
-            return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
-                                   authenticated=authenticated, student_id=student_id,
-                                   error='学籍番号が確認できません。教員にお問い合わせください。'), 400
-
-        if not authenticated:
-            # Limit abusive submissions from the same source (max 5/hour).
+        if authenticated:
+            # Re-check the account in the database at the moment the command is queued.
+            account = conn.execute('SELECT id,username,student_id,name,role,status FROM managers WHERE id=?',
+                                   (session.get('manager_id'),)).fetchone()
+            if not account or account['status'] != '有効' or account['role'] != session.get('role'):
+                return page(403, error='アカウントの認証を確認できませんでした。')
+            if account['role'] == 'Student':
+                if not account['student_id']:
+                    return page(403, error='学籍番号が登録されていません。')
+                identifier = account['student_id']
+            elif account['role'] in ADMIN_ROLES:
+                identifier = (account['student_id'] or account['username'] or '').strip()
+            else:
+                return page(403, error='アクセス権限がありません。')
+            if not re.fullmatch(r'[0-9A-Za-z_-]{3,64}', identifier):
+                return page(403, error='アカウント番号の設定を確認してください。')
+        else:
+            # Unregistered guests can request a review, but never get an automatic command.
             now_epoch = int(time.time())
             ip = request.remote_addr or 'unknown'
             conn.execute('DELETE FROM guest_request_limits WHERE created_at < ?', (now_epoch - 86400,))
             count = conn.execute('SELECT COUNT(*) FROM guest_request_limits WHERE ip_address=? AND created_at>=?',
                                  (ip, now_epoch - 3600)).fetchone()[0]
             if count >= 5:
-                return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
-                                       authenticated=False, student_id=student_id,
-                                       error='申請回数の上限に達しました。時間をおいてお試しください。'), 429
+                return page(429, student_id=identifier, error='申請回数の上限に達しました。時間をおいてお試しください。')
             conn.execute('INSERT INTO guest_request_limits(ip_address,created_at) VALUES (?,?)',
                          (ip, now_epoch))
 
-        instant = False
-        if authenticated and (not is_admin() or session.get('student_id') == student_id):
-            permission = conn.execute('SELECT 1 FROM room_permissions WHERE manager_id=? AND room=?',
-                                      (session['manager_id'], key)).fetchone()
-            instant = bool(permission)
+        instant = authenticated
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        source = '認証済Web申請' if authenticated else '未認証Web申請'
-        cur = conn.execute("""INSERT INTO requests(student_id,key,action,status,time,source,guest_name)
-                              VALUES (?,?,?,'申請中',?,?,?)""",
-                           (student_id, key, action, now, source, guest_name if not authenticated else None))
-        # Guest requests never call issue_command, even if the student has other permissions.
+        source = ('教員Web申請' if teacher else '認証済Web申請') if authenticated else '未認証Web申請'
+        # Preserve teacher name for the admin list even if no student roster record exists.
+        display_name = account['name'] if authenticated and teacher else (guest_name if not authenticated else None)
+        cur = conn.execute("INSERT INTO requests(student_id,key,action,status,time,source,guest_name) VALUES (?,?,?,'申請中',?,?,?)",
+                           (identifier, room, action, now, source, display_name))
         if instant:
             conn.execute("UPDATE requests SET status='承認',approved_at=?,execution_status='待機中' WHERE id=?",
                          (now, cur.lastrowid))
-            issue_command(conn, key, action, 'verified_user', student_id, cur.lastrowid)
+            issue_command(conn, room, action, 'verified_user', identifier, cur.lastrowid)
+
     session['csrf'] = secrets.token_hex(24)
-    return render_template('student.html', rooms=ROOMS, actions=ACTIONS,
-                           authenticated=authenticated, student_id=student_id, sent=True,
-                           message='開錠指令を送信しました。装置の応答をお待ちください。' if instant
-                                   else '申請を受け付けました。教員の承認をお待ちください。')
+    return page(sent=True, student_id=identifier,
+                message=('開錠指令を登録しました。装置の応答をお待ちください。' if instant
+                         else '申請を受け付けました。教員の承認をお待ちください。'))[0]
+@app.route("/guest/student_submit")
+def guest_student_submit():
+    session.clear()
+    return redirect(url_for("student_submit"))
 
 @app.route("/status", methods=["POST"])
 def status():
@@ -447,11 +458,13 @@ def register():
     name = request.form.get('name', '').strip()
     department = request.form.get('department', '').strip()
     school_class = request.form.get('school_class', '').strip()
+    course = request.form.get('course', '').strip()
+    number_raw = request.form.get('number', '').strip()
     phone = request.form.get('phone', '').strip()
     email = request.form.get('email', '').strip().lower()
     password = request.form.get('password', '')
     def invalid(message):
-        values = {k: request.form.get(k, '') for k in ('student_id','username','name','department','school_class','phone','email')}
+        values = {k: request.form.get(k, '') for k in ('student_id','username','name','department','school_class','course','number','phone','email')}
         return render_template('register.html', error=message, csrf=session['register_csrf'],
                                departments=DEPARTMENTS, classes=SCHOOL_CLASSES, values=values), 400
     if not re.fullmatch(r'[0-9A-Za-z-]{3,30}', student_id):
@@ -462,6 +475,11 @@ def register():
         return invalid('名前を入力してください。')
     if department not in DEPARTMENTS or school_class not in SCHOOL_CLASSES:
         return invalid('学科とクラスを選択してください。')
+    if not 1 <= len(course) <= 100 or any(ord(ch) < 32 for ch in course):
+        return invalid('コースを入力してください（100文字以内）。')
+    if not re.fullmatch(r'[0-9]{1,2}', number_raw) or not 1 <= int(number_raw) <= 99:
+        return invalid('出席番号は1～99の数字で入力してください。')
+    number = int(number_raw)
     if not re.fullmatch(r'[0-9-]{10,15}', phone) or len(phone.replace('-', '')) not in (10,11):
         return invalid('電話番号は10～11桁の数字で入力してください。')
     if len(email) > 254 or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email):
@@ -477,10 +495,10 @@ def register():
             return invalid('学籍番号、ユーザー名、またはメールアドレスは既に登録されています。')
         try:
             conn.execute("""INSERT INTO managers
-                (username,password,name,email,phone,department,school_class,role,status,student_id)
-                VALUES (?,?,?,?,?,?,?,'Student','承認待ち',?)""",
+                (username,password,name,email,phone,department,school_class,course,number,role,status,student_id)
+                VALUES (?,?,?,?,?,?,?,?,?,'Student','承認待ち',?)""",
                 (username, generate_password_hash(password), name, email, phone,
-                 department, school_class, student_id))
+                 department, school_class, course, number, student_id))
         except sqlite3.IntegrityError:
             return invalid('既に登録されている情報があります。')
     session.pop('register_csrf', None)
@@ -511,8 +529,8 @@ def student_approvals():
                 if existing:
                     error = '学籍番号が既に学生台帳にあります。管理者が確認してください。'
                 else:
-                    conn.execute('INSERT INTO students(student_id,name,department,course,class) VALUES(?,?,?,?,?)',
-                                 (user['student_id'],user['name'],user['department'], '',user['school_class']))
+                    conn.execute('INSERT INTO students(student_id,name,department,course,class,number) VALUES(?,?,?,?,?,?)',
+                                 (user['student_id'],user['name'],user['department'],user['course'],user['school_class'],user['number']))
                     conn.execute("UPDATE managers SET status='有効' WHERE id=?", (manager_id,))
             else:
                 conn.execute("UPDATE managers SET status='却下' WHERE id=?", (manager_id,))
@@ -638,33 +656,53 @@ def admin():
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT r.id, r.student_id, r.key, r.action, r.status, r.time, r.source, r.execution_status,
-               COALESCE(NULLIF(r.guest_name, ''), s.name) AS name, s.department, s.course, s.class, s.number
+    # Match an active student account without multiplying request rows.
+    request_details_sql = """
+        SELECT
+            r.id,
+            r.student_id,
+            r.key,
+            r.action,
+            r.status,
+            r.time,
+            r.source,
+            r.execution_status,
+            COALESCE(
+                NULLIF(r.guest_name, ''),
+                NULLIF(s.name, ''),
+                NULLIF(m.name, ''),
+                '未登録'
+            ) AS name,
+            COALESCE(NULLIF(s.department, ''), NULLIF(m.department, ''), '-') AS department,
+            COALESCE(NULLIF(s.course, ''), NULLIF(m.course, ''), '-') AS course,
+            COALESCE(NULLIF(s.class, ''), NULLIF(m.school_class, ''), '-') AS class,
+            COALESCE(CAST(s.number AS TEXT), CAST(m.number AS TEXT), '-') AS number
         FROM requests r
         LEFT JOIN students s ON r.student_id = s.student_id
-        WHERE r.status='申請中'
-        ORDER BY r.time DESC
-    """)
+        LEFT JOIN managers m ON m.id = (
+            SELECT MIN(m2.id)
+            FROM managers m2
+            WHERE m2.student_id = r.student_id
+              AND m2.role = 'Student'
+              AND m2.status = '有効'
+        )
+    """
+    cur.execute(
+        request_details_sql + " WHERE r.status = ? ORDER BY r.time DESC, r.id DESC",
+        ('申請中',),
+    )
     pending_rows = cur.fetchall()
 
-    cur.execute("""
-        SELECT r.id, r.student_id, r.key, r.action, r.status, r.time, r.source, r.execution_status,
-               COALESCE(NULLIF(r.guest_name, ''), s.name) AS name, s.department, s.course, s.class, s.number
-        FROM requests r
-        LEFT JOIN students s ON r.student_id = s.student_id
-        WHERE r.status!='申請中'
-        ORDER BY r.time DESC
-    """)
+    cur.execute(
+        request_details_sql + " WHERE r.status != ? ORDER BY r.time DESC, r.id DESC",
+        ('申請中',),
+    )
     done_rows = cur.fetchall()
 
-    device_event = cur.execute("""SELECT event_at FROM access_events
-        WHERE device_id='esp32-01' AND event_type='heartbeat'
-        ORDER BY id DESC LIMIT 1""").fetchone()
+    device_status = read_device_status(conn)
     conn.close()
-    last_seen = device_event['event_at'] if device_event else None
-    device_online = bool(last_seen and
-        (datetime.now() - datetime.strptime(last_seen, '%Y-%m-%d %H:%M:%S')).total_seconds() < 90)
+    device_online = all(v['online'] for v in device_status.values())
+    last_seen = ', '.join(f"{key}: {value['last_seen'] or '記録なし'}" for key, value in device_status.items())
 
     pending = [dict(row) for row in pending_rows]
     done = [dict(row) for row in done_rows]
@@ -672,7 +710,7 @@ def admin():
     import secrets
     if 'csrf' not in session:
         session['csrf'] = secrets.token_hex(24)
-    return render_template("admin.html", pending=pending, done=done, csrf=session['csrf'], device_online=device_online, last_seen=last_seen)
+    return render_template("admin.html", pending=pending, done=done, csrf=session['csrf'], device_online=device_online, last_seen=last_seen, device_status=device_status)
 
 @app.get('/admin/api/lock-status')
 def lock_status():
@@ -682,13 +720,25 @@ def lock_status():
         conn.row_factory = sqlite3.Row
         rows = conn.execute("""SELECT id, status, execution_status, executed_at
             FROM requests ORDER BY id DESC LIMIT 100""").fetchall()
-        last = conn.execute("""SELECT event_at FROM access_events
-            WHERE device_id='esp32-01' AND event_type='heartbeat'
-            ORDER BY id DESC LIMIT 1""").fetchone()
-    seen = last['event_at'] if last else None
-    online = bool(seen and (datetime.now() - datetime.strptime(seen, '%Y-%m-%d %H:%M:%S')).total_seconds() < 90)
-    return {'online': online, 'last_seen': seen,
-            'requests': [dict(r) for r in rows]}
+        device_status = read_device_status(conn)
+    return {'online': all(v['online'] for v in device_status.values()),
+            'devices': device_status, 'requests': [dict(r) for r in rows]}
+
+
+def read_device_status(conn):
+    result = {}
+    for room, device_id in ROOM_DEVICE.items():
+        row = conn.execute("""SELECT event_at FROM access_events
+            WHERE device_id=? AND event_type='heartbeat' ORDER BY id DESC LIMIT 1""",
+            (device_id,)).fetchone()
+        seen = row['event_at'] if row else None
+        try:
+            online = bool(seen and (datetime.now() - datetime.strptime(
+                seen, '%Y-%m-%d %H:%M:%S')).total_seconds() < 90)
+        except ValueError:
+            online = False
+        result[device_id] = {'room': room, 'online': online, 'last_seen': seen}
+    return result
 
 # --- 管理者一覧画面 (MỚI BỔ SUNG) ---
 @app.route("/admin/managers")

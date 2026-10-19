@@ -209,7 +209,7 @@
 
       <div class="content">
         <h2 class="page-title">申請一覧</h2>
-        <p id="esp32-status" style="font-weight:bold">ESP32: {{ 'オンライン' if device_online else 'オフライン' }} | 最終通信: {{ last_seen or '記録なし' }}</p>
+        <p id="esp32-status" style="font-weight:bold">{% for device_id, info in device_status.items() %}{{ device_id }} ({{ info.room }}): {{ 'オンライン' if info.online else 'オフライン' }} | 最終通信: {{ info.last_seen or '記録なし' }}<br>{% endfor %}</p>
 
         <div class="table-wrap">
           <table class="request-table">
@@ -225,7 +225,7 @@
 
                 <th>名前</th>
 
-                <th>学籍番号</th>
+                <th>学籍番号／先生番号</th>
 
                 <th>学科</th>
 
@@ -264,7 +264,7 @@
 
                 <td>{{ item.name }}</td>
 
-                <td>{{ item.student_id }}</td>
+                <td>{% if item.source == "教員Web申請" %}先生番号：{% endif %}{{ item.student_id }}</td>
 
                 <td>{{ item.department }}</td>
 
@@ -317,7 +317,7 @@
 
                 <td>{{ item.name }}</td>
 
-                <td>{{ item.student_id }}</td>
+                <td>{% if item.source == "教員Web申請" %}先生番号：{% endif %}{{ item.student_id }}</td>
 
                 <td>{{ item.department }}</td>
 
@@ -361,9 +361,7 @@
           const res = await fetch('/admin/api/lock-status', {credentials: 'same-origin',cache:'no-store'});
           if (!res.ok) return;
           const json = await res.json();
-          document.getElementById('esp32-status').textContent = 'ESP32: ' +
-            (json.online ? 'オンライン' : 'オフライン') +
-            ' | 最終通信: ' + (json.last_seen || '記録なし');
+          document.getElementById('esp32-status').textContent = Object.entries(json.devices || {}).map(([id, d]) => id + ' (' + d.room + '): ' + (d.online ? 'オンライン' : 'オフライン') + ' | 最終通信: ' + (d.last_seen || '記録なし')).join(' / ');
           for (const item of json.requests) {
             const cell = document.querySelector('.servo-status[data-request-id="' + item.id + '"]');
             if (cell) cell.textContent = item.execution_status || (item.status === '却下' ? '送信なし' : '未送信');

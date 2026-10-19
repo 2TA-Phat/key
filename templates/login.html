@@ -82,7 +82,9 @@
         <input type="password" name="password" required>
         <button type="submit">ログイン</button>
     </form>
-    <a href="/student_submit" class="guest-link">ログインせずに開錠申請</a>
+    <a href="{{ url_for('guest_student_submit') }}" class="guest-link">
+    ログインせずに開錠申請
+    </a>
     <p style="text-align:center;margin:20px 0 0"><a href="/register">生徒新規登録</a></p>
 </div>
 </body>

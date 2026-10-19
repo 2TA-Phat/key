@@ -1,0 +1,14 @@
+# Gmail credentials
+secrets/
+
+# Python
+__pycache__/
+*.pyc
+
+# Database
+app.db
+database.db
+
+# Environment
+.env
+.env.*
