@@ -9,8 +9,8 @@ from functools import wraps
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request, session
 
 rfid_api = Blueprint('rfid_api', __name__)
-ROOMS = ('1TA', '2TA')
-ROOM_DEVICE = {'1TA': 'esp32-01', '2TA': 'esp32-02'}
+ROOMS = ('1TA', '2TA', '2TB')
+ROOM_DEVICE = {'1TA': 'esp32-01', '2TA': 'esp32-02', '2TB': 'esp32-03'}
 DEVICES = tuple(ROOM_DEVICE.values())
 ACTIONS = ('開ける', '閉める')
 # Each room is controlled exclusively by its designated device.
@@ -45,8 +45,8 @@ def initialize(db_path):
             delivered_at TEXT, finished_at TEXT,
             FOREIGN KEY(request_id) REFERENCES requests(id))''')
         con.execute("""UPDATE device_commands SET device_id = CASE room
-            WHEN '1TA' THEN 'esp32-01' WHEN '2TA' THEN 'esp32-02' ELSE device_id END
-            WHERE state='pending' AND room IN ('1TA','2TA')""")
+            WHEN '1TA' THEN 'esp32-01' WHEN '2TA' THEN 'esp32-02' WHEN '2TB' THEN 'esp32-03' ELSE device_id END
+            WHERE state='pending' AND room IN ('1TA','2TA','2TB')""")
         con.execute('''CREATE TABLE IF NOT EXISTS access_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_at TEXT NOT NULL, device_id TEXT, uid TEXT,
@@ -69,6 +69,7 @@ def auth_device(fn):
         tokens = {
             'esp32-01': os.environ.get('TIST_DEVICE_TOKEN_01') or os.environ.get('TIST_DEVICE_TOKEN', ''),
             'esp32-02': os.environ.get('TIST_DEVICE_TOKEN_02', ''),
+            'esp32-03': os.environ.get('TIST_DEVICE_TOKEN_03', ''),
         }
         expected = tokens.get(device, '')
         token = request.headers.get('X-Device-Token', '')

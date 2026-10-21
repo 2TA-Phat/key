@@ -10,17 +10,17 @@
 const char* WIFI_SSID = "TIST-FREE";
 const char* WIFI_PASSWORD = "TIST-FREE";
 const char* SERVER = "http://172.16.9.15:5000";  // PC LAN IPv4
-const char* DEVICE_TOKEN = "TEST_TOKEN";
-const char* DEVICE_ID = "esp32-01";
-const char* ROOMS[] = {"1TA", "2TA", "2TB", "3TE"};
-const int SERVO_PINS[] = {13, 14, 25, 26};
+// Set a unique secret matching Flask environment TIST_DEVICE_TOKEN_02
+const char* DEVICE_TOKEN = "587f21c8d62b78d8b8a5e7c0c362688a1e8fff2e20ba3c0c3d97cca99d3cd0cd";
+const char* DEVICE_ID = "esp32-02";
+const char* ROOM = "2TA";
+constexpr int SERVO_PIN = 13;
 constexpr int RFID_SS = 21, RFID_RST = 22;
-constexpr int ROOM_BUTTON = 32;
+
 constexpr int LOCK_ANGLE = 30, UNLOCK_ANGLE = 160;
 MFRC522 reader(RFID_SS, RFID_RST);
-Servo servo[4];
-int selectedRoom = 0;
-unsigned long lastPoll = 0, lastButton = 0, lastScan = 0, lastHeartbeat = 0;
+Servo servo;
+unsigned long lastPoll = 0, lastScan = 0, lastHeartbeat = 0;
 unsigned long wifiAttemptAt = 0, wifiLogAt = 0;
 bool wifiWasConnected = false;
 String previousUID;
@@ -78,9 +78,7 @@ void executeCommand(JsonDocument& instruction) {
   int commandId = instruction["command_id"].as<int>();
   String room = instruction["room"].as<String>();
   String action = instruction["action"].as<String>();
-  int idx = -1;
-  for (int i = 0; i < 4; i++) if (room == ROOMS[i]) idx = i;
-  if (idx < 0 || commandId <= 0 || (action != "開ける" && action != "閉める")) {
+  if (room != ROOM || commandId <= 0 || (action != "開ける" && action != "閉める")) {
     if (commandId > 0) sendResult(commandId, "failed");
     return;
   }
@@ -88,7 +86,7 @@ void executeCommand(JsonDocument& instruction) {
   // Prevent accidental repeat within one runtime. After reset, server's one-time delivery is authoritative.
   recentIds[recentPos] = commandId;
   recentPos = (recentPos + 1) % 20;
-  servo[idx].write(action == "開ける" ? UNLOCK_ANGLE : LOCK_ANGLE);
+  servo.write(action == "開ける" ? UNLOCK_ANGLE : LOCK_ANGLE);
   delay(700);
   Serial.printf("Room %s, action %s, command %d\n", room.c_str(), action.c_str(), commandId);
   sendResult(commandId, "issued"); // Issued to servo, NOT sensor-confirmed physical unlock.
@@ -101,11 +99,11 @@ void scanRFID() {
   lastScan = millis();
   JsonDocument requestData, reply;
   requestData["uid"] = uid;
-  requestData["room"] = ROOMS[selectedRoom];
+  requestData["room"] = ROOM;
   String payload;
   serializeJson(requestData, payload);
   int status;
-  Serial.println("Scan: " + uid + " room: " + ROOMS[selectedRoom]);
+  Serial.println("Scan: " + uid + " room: " + ROOM);
   if (!httpJson("/api/rfid/scan", payload, false, reply, status)) {
     Serial.println("Offline: no unlock");
     return;
@@ -139,18 +137,15 @@ void pollCommands() {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(ROOM_BUTTON, INPUT_PULLUP);
-  for (int i = 0; i < 4; i++) {
-    servo[i].setPeriodHertz(50);
-    servo[i].attach(SERVO_PINS[i], 500, 2400);
-    servo[i].write(LOCK_ANGLE);
-  }
+  servo.setPeriodHertz(50);
+  servo.attach(SERVO_PIN, 500, 2400);
+  servo.write(LOCK_ANGLE);
   SPI.begin(18, 19, 23, RFID_SS);
   reader.PCD_Init();
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   wifiAttemptAt = millis();
-  Serial.println("Boot. Selected room: 1TA");
+  Serial.println("Boot. Device esp32-02, room 2TA");
   Serial.printf("Connecting to WiFi SSID: %s\n", WIFI_SSID);
 }
 
@@ -188,11 +183,7 @@ void loop() {
     bool ok = httpJson("/api/device/heartbeat", "{}", false, out, status);
     Serial.printf("Heartbeat: HTTP %d, JSON %s\n", status, ok ? "OK" : "FAILED");
   }
-  if (digitalRead(ROOM_BUTTON) == LOW && now - lastButton > 400) {
-    selectedRoom = (selectedRoom + 1) % 4;
-    lastButton = now;
-    Serial.printf("Selected room: %s\n", ROOMS[selectedRoom]);
-  }
+
   if (reader.PICC_IsNewCardPresent() && reader.PICC_ReadCardSerial()) {
     scanRFID();
     reader.PICC_HaltA();

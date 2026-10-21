@@ -11,7 +11,7 @@ const char* WIFI_SSID = "TIST-FREE";
 const char* WIFI_PASSWORD = "TIST-FREE";
 const char* SERVER = "http://172.16.9.15:5000";  // PC LAN IPv4
 // Set a unique secret matching Flask environment TIST_DEVICE_TOKEN_01
-const char* DEVICE_TOKEN = "REPLACE_WITH_DEVICE_01_SECRET";
+const char* DEVICE_TOKEN = "36c33191e359004317b0b257e52b59da1e346474eb3c111b04b21447381e5cc7";
 const char* DEVICE_ID = "esp32-01";
 const char* ROOM = "1TA";
 constexpr int SERVO_PIN = 13;

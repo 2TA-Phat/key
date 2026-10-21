@@ -10,10 +10,10 @@
 const char* WIFI_SSID = "TIST-FREE";
 const char* WIFI_PASSWORD = "TIST-FREE";
 const char* SERVER = "http://172.16.9.15:5000";  // PC LAN IPv4
-// Set a unique secret matching Flask environment TIST_DEVICE_TOKEN_02
-const char* DEVICE_TOKEN = "REPLACE_WITH_DEVICE_02_SECRET";
-const char* DEVICE_ID = "esp32-02";
-const char* ROOM = "2TA";
+// Set a unique secret matching Flask environment TIST_DEVICE_TOKEN_03
+const char* DEVICE_TOKEN = "8e69cf87c1129151f824f799c2deb7b9fbc01127e54b2b22889d8c26bd4c4ef4";
+const char* DEVICE_ID = "esp32-03";
+const char* ROOM = "2TB";
 constexpr int SERVO_PIN = 13;
 constexpr int RFID_SS = 21, RFID_RST = 22;
 
@@ -145,7 +145,7 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   wifiAttemptAt = millis();
-  Serial.println("Boot. Device esp32-02, room 2TA");
+  Serial.println("Boot. Device esp32-03, room 2TB");
   Serial.printf("Connecting to WiFi SSID: %s\n", WIFI_SSID);
 }
 

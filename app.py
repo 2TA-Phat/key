@@ -13,10 +13,11 @@ import smtplib
 import ssl
 from email.message import EmailMessage
 
-from flask import Flask, request, redirect, render_template, session, url_for
+from flask import Flask, request, redirect, render_template, session, url_for, g
 from rfid_api import rfid_api, initialize, issue_command, ROOMS, ACTIONS, ROOM_DEVICE
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
+from tab_sessions import TabSessionInterface, tab_redirect_location
 
 
 app = Flask(__name__)
@@ -24,8 +25,15 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("TIST_FLASK_SECRET", "CHANGE_ME_LOCAL_DEMO_ONLY")
 if app.secret_key == "CHANGE_ME_LOCAL_DEMO_ONLY" and os.environ.get("TIST_ALLOW_LOCAL_DEMO") != "1":
     raise RuntimeError("TIST_FLASK_SECRET を設定してください。")
-app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=os.environ.get("TIST_HTTPS", "0") == "1")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("TIST_HTTPS", "0") == "1",
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=3),
+    SESSION_REFRESH_EACH_REQUEST=False,
+)
 app.config["DATABASE"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.db")
+app.session_interface = TabSessionInterface()
 app.register_blueprint(rfid_api)
 
 # Cấu hình Mặc định Tài khoản & Mật khẩu Admin
@@ -214,14 +222,48 @@ ADMIN_ROLES = {'Administrator', 'Admin', '管理者', '教員', 'Teacher', 'Oper
 def is_admin():
     return bool(session.get('logged_in') and session.get('role') in ADMIN_ROLES)
 
+
+def complete_login(manager):
+    """Administrator: absolute 3 hours; other accounts: absolute 5 minutes."""
+    session.clear()
+    session.permanent = True
+    session.update(
+        logged_in=True,
+        manager_id=manager['id'],
+        username=manager['username'],
+        name=manager['name'],
+        role=manager['role'],
+        student_id=manager['student_id'],
+        otp_verified=True,
+        auth_expires_at=int(time.time()) + (3 * 3600 if manager['role'] == 'Administrator' else 300),
+    )
+    session['csrf'] = secrets.token_hex(24)
+
+
+@app.after_request
+def preserve_tab_in_redirect(response):
+    # Ensure every Flask redirect stays inside the originating tab's session.
+    if response.status_code in (301, 302, 303, 307, 308):
+        target = response.headers.get('Location', '')
+        if target:
+            response.headers['Location'] = tab_redirect_location(target, request)
+    response.headers['Cache-Control'] = 'no-store' if request.path.startswith(('/admin', '/student_submit', '/guest/', '/login', '/verify-otp')) else response.headers.get('Cache-Control','no-cache')
+    return response
+
 @app.before_request
 def admin_access_control():
     if session.get('logged_in'):
-        with sqlite3.connect(app.config['DATABASE']) as con:
-            info = con.execute("SELECT status,role FROM managers WHERE id=?",(session.get('manager_id'),)).fetchone()
-        if not info or info[0] != '有効' or info[1] != session.get('role') or not session.get('otp_verified'):
+        # All roles use absolute timeouts: Administrator 3 hours, others 5 minutes.
+        if int(time.time()) >= session.get('auth_expires_at', 0):
             session.clear()
-            return redirect(url_for('login'))
+            if request.path.startswith(('/admin', '/users', '/approve/', '/reject/', '/delete/')):
+                return redirect(url_for('login'))
+        else:
+            with sqlite3.connect(app.config['DATABASE']) as con:
+                info = con.execute("SELECT status,role FROM managers WHERE id=?", (session.get('manager_id'),)).fetchone()
+            if not info or info[0] != '有効' or info[1] != session.get('role') or not session.get('otp_verified'):
+                session.clear()
+                return redirect(url_for('login'))
     sensitive = ('/admin', '/users', '/approve/', '/reject/', '/delete/')
     if request.path.startswith(sensitive) and not is_admin():
         return redirect(url_for('login')) if not session.get('logged_in') else ('アクセス権限がありません。', 403)
@@ -245,12 +287,7 @@ def login():
             # Only the exact Administrator role may use the requested password-only login.
             # Other roles continue to require their email OTP.
             if manager['role'] == 'Administrator':
-                session.clear()
-                session.update(logged_in=True, manager_id=manager['id'],
-                               username=manager['username'], name=manager['name'],
-                               role=manager['role'], student_id=manager['student_id'],
-                               otp_verified=True)
-                session['csrf'] = secrets.token_hex(24)
+                complete_login(manager)
                 return redirect(url_for('admin_choice'))
             # Teachers approve new students; no invitation code is required.
             now = int(time.time())
@@ -301,10 +338,7 @@ def verify_otp():
                     return render_template('login.html', error='認証回数の上限に達しました。'), 429
                 return render_template('verify_otp.html', error='認証コードが正しくありません。'), 401
             conn.execute('DELETE FROM login_otp WHERE manager_id=?', (manager_id,))
-        session.clear()
-        session.update(logged_in=True, manager_id=manager['id'], username=manager['username'],
-                       name=manager['name'], role=manager['role'], student_id=manager['student_id'], otp_verified=True)
-        session['csrf'] = secrets.token_hex(24)
+        complete_login(manager)
         return redirect(url_for('admin') if is_admin() else url_for('student_submit'))
     return render_template('verify_otp.html')
 
@@ -327,25 +361,64 @@ def index():
     return redirect(url_for('login'))
 
 @app.route('/student_submit', methods=['GET', 'POST'])
-def student_submit():
-    authenticated = bool(session.get('logged_in') and session.get('otp_verified'))
+def student_submit(guest_mode=False):
+    # Guest and authenticated submissions must remain separate PER REQUEST,
+    # never by clearing or overwriting the shared browser session.
+    authenticated = bool(not guest_mode and session.get('logged_in') and session.get('otp_verified'))
     teacher = authenticated and is_admin()
-    if 'csrf' not in session:
-        session['csrf'] = secrets.token_hex(24)
+    csrf_key = 'guest_csrf' if guest_mode else 'csrf'
+    if csrf_key not in session:
+        session[csrf_key] = secrets.token_hex(24)
 
     # A teacher number must be stored on the authenticated account; if absent,
     # use the account username as an identifier, without treating it as a verified staff ID.
-    account_identifier = ((session.get('student_id') or session.get('username') or '').strip()
-                          if teacher else (session.get('student_id') or '').strip())
+    account_identifier = ('' if guest_mode else
+                          (session.get('student_id') or session.get('username') or '').strip()
+                          if teacher else ('' if guest_mode else (session.get('student_id') or '').strip()))
     def page(status=200, **kwargs):
-        context = dict(rooms=ROOMS, actions=ACTIONS, authenticated=authenticated,
-                       teacher=teacher, student_id=account_identifier)
+        context = dict(
+            rooms=ROOMS,
+            actions=ACTIONS,
+            authenticated=authenticated,
+            teacher=teacher,
+            student_id=account_identifier,
+            csrf=session[csrf_key],
+            selected_room=ROOMS[0],
+            selected_action=ACTIONS[0]
+        )
         context.update(kwargs)
-        return render_template('student.html', **context), status
+        html = render_template('student.html', **context)
+        if guest_mode:
+            # Keep POSTs on the guest-only endpoint, even if an Admin is logged
+            # in on another tab. The existing Japanese template stays unchanged.
+            def rewrite_form(match):
+                tag = match.group(0)
+                target = url_for('guest_student_submit')
+                if re.search(r'\baction\s*=', tag, flags=re.IGNORECASE):
+                    return re.sub(r'\baction\s*=\s*(["\']).*?\1',
+                                  lambda _: f'action="{target}"', tag,
+                                  count=1, flags=re.IGNORECASE)
+                return tag[:-1] + f' action="{target}">'
+            html = re.sub(r'<form\b[^>]*>', rewrite_form, html, count=1, flags=re.IGNORECASE)
+            # The current student.html was not attached. Ensure a template that
+            # reads session['csrf'] instead of the provided csrf variable still
+            # submits the separate guest-only CSRF value.
+            def rewrite_csrf_input(match):
+                tag = match.group(0)
+                if not re.search(r'\bname\s*=\s*(["\'])csrf\1', tag, flags=re.IGNORECASE):
+                    return tag
+                value = session[csrf_key]
+                if re.search(r'\bvalue\s*=', tag, flags=re.IGNORECASE):
+                    return re.sub(r'\bvalue\s*=\s*(["\']).*?\1',
+                                  lambda _: f'value="{value}"', tag,
+                                  count=1, flags=re.IGNORECASE)
+                return tag[:-1] + f' value="{value}">'
+            html = re.sub(r'<input\b[^>]*>', rewrite_csrf_input, html, flags=re.IGNORECASE)
+        return html, status
 
     if request.method == 'GET':
         return page()[0]
-    if not hmac.compare_digest(request.form.get('csrf', ''), session.get('csrf', '')):
+    if not hmac.compare_digest(request.form.get('csrf', ''), session.get(csrf_key, '')):
         return '認証エラー', 403
 
     requested_id = request.form.get('student_id', '').strip()
@@ -408,14 +481,22 @@ def student_submit():
                          (now, cur.lastrowid))
             issue_command(conn, room, action, 'verified_user', identifier, cur.lastrowid)
 
-    session['csrf'] = secrets.token_hex(24)
-    return page(sent=True, student_id=identifier,
-                message=('開錠指令を登録しました。装置の応答をお待ちください。' if instant
-                         else '申請を受け付けました。教員の承認をお待ちください。'))[0]
-@app.route("/guest/student_submit")
+    session[csrf_key] = secrets.token_hex(24)
+    return page(
+        sent=True,
+        student_id=identifier,
+        selected_room=room,
+        selected_action=action,
+        message=(
+            '開錠指令を登録しました。装置の応答をお待ちください。'
+            if instant
+            else '申請を受け付けました。教員の承認をお待ちください。'
+        )
+    )[0]
+@app.route("/guest/student_submit", methods=["GET", "POST"])
 def guest_student_submit():
-    session.clear()
-    return redirect(url_for("student_submit"))
+    # Public submission must NOT log out an Administrator or another account.
+    return student_submit(guest_mode=True)
 
 @app.route("/status", methods=["POST"])
 def status():
