@@ -12,3 +12,9 @@ database.db
 # Environment
 .env
 .env.*
+
+Add-Content .gitignore "`n# Private credentials"
+Add-Content .gitignore "tist_device_tokens.ps1"
+Add-Content .gitignore "secrets/"
+Add-Content .gitignore ".env"
+Add-Content .gitignore "app.db"

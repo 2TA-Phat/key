@@ -13,7 +13,7 @@ import smtplib
 import ssl
 from email.message import EmailMessage
 
-from flask import Flask, request, redirect, render_template, session, url_for, g
+from flask import Flask, request, redirect, render_template, session, url_for, g, jsonify
 from rfid_api import rfid_api, initialize, issue_command, ROOMS, ACTIONS, ROOM_DEVICE
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -89,6 +89,8 @@ def init_db():
 
     cur.execute("PRAGMA table_info(requests)")
     cols = {row[1] for row in cur.fetchall()}
+    if "reason" not in cols:
+        cur.execute("ALTER TABLE requests ADD COLUMN reason TEXT")
     if "source" not in cols:
         cur.execute("ALTER TABLE requests ADD COLUMN source TEXT NOT NULL DEFAULT 'Web申請'")
     cur.execute("PRAGMA table_info(managers)")
@@ -238,6 +240,8 @@ def complete_login(manager):
         auth_expires_at=int(time.time()) + (3 * 3600 if manager['role'] == 'Administrator' else 300),
     )
     session['csrf'] = secrets.token_hex(24)
+    if manager['role'] == 'Administrator':
+        app.session_interface.publish_admin(app, session)
 
 
 @app.after_request
@@ -247,7 +251,41 @@ def preserve_tab_in_redirect(response):
         target = response.headers.get('Location', '')
         if target:
             response.headers['Location'] = tab_redirect_location(target, request)
+    # Bootstrap per-tab identity BEFORE login form submission, even if the HTML
+    # template forgot to include static/js/tab_session.js.
+    if (request.path in ('/login', '/verify-otp') and
+            response.mimetype == 'text/html' and response.status_code < 400 or
+            request.path in ('/login', '/verify-otp') and
+            response.mimetype == 'text/html' and response.status_code in (400, 401, 403, 429, 503)):
+        html = response.get_data(as_text=True)
+        tag = '<script src="' + url_for('tist_tab_bootstrap') + '"></script>'
+        if 'data-tist-tab-bootstrap' not in html:
+            tag = '<script data-tist-tab-bootstrap src="' + url_for('tist_tab_bootstrap') + '"></script>'
+            if re.search(r'</head\s*>', html, flags=re.IGNORECASE):
+                html = re.sub(r'</head\s*>', lambda m: tag + m.group(0), html, count=1, flags=re.IGNORECASE)
+            elif re.search(r'</body\s*>', html, flags=re.IGNORECASE):
+                html = re.sub(r'</body\s*>', lambda m: tag + m.group(0), html, count=1, flags=re.IGNORECASE)
+            else:
+                html = tag + html
+            response.set_data(html)
     response.headers['Cache-Control'] = 'no-store' if request.path.startswith(('/admin', '/student_submit', '/guest/', '/login', '/verify-otp')) else response.headers.get('Cache-Control','no-cache')
+    return response
+
+@app.get('/_tist/tab-session.js')
+def tist_tab_bootstrap():
+    from flask import send_from_directory
+
+    js_folder = os.path.join(
+        app.root_path, 'static', 'js'
+    )
+
+    response = send_from_directory(
+        js_folder,
+        'tab_session.js',
+        mimetype='application/javascript'
+    )
+
+    response.headers['Cache-Control'] = 'no-store'
     return response
 
 @app.before_request
@@ -255,6 +293,8 @@ def admin_access_control():
     if session.get('logged_in'):
         # All roles use absolute timeouts: Administrator 3 hours, others 5 minutes.
         if int(time.time()) >= session.get('auth_expires_at', 0):
+            if session.get('role') == 'Administrator':
+                app.session_interface.revoke_admin(app, session)
             session.clear()
             if request.path.startswith(('/admin', '/users', '/approve/', '/reject/', '/delete/')):
                 return redirect(url_for('login'))
@@ -262,6 +302,8 @@ def admin_access_control():
             with sqlite3.connect(app.config['DATABASE']) as con:
                 info = con.execute("SELECT status,role FROM managers WHERE id=?", (session.get('manager_id'),)).fetchone()
             if not info or info[0] != '有効' or info[1] != session.get('role') or not session.get('otp_verified'):
+                if session.get('role') == 'Administrator':
+                    app.session_interface.revoke_admin(app, session)
                 session.clear()
                 return redirect(url_for('login'))
     sensitive = ('/admin', '/users', '/approve/', '/reject/', '/delete/')
@@ -273,6 +315,8 @@ def admin_access_control():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
+        if not getattr(session, 'tab_id', None):
+            return render_template('login.html', error='タブの識別情報がありません。ページを再読み込みしてください。'), 400
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         with sqlite3.connect(app.config['DATABASE']) as conn:
@@ -294,7 +338,14 @@ def login():
             if not manager['email'] or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', manager['email']):
                 return render_template('login.html', error='メールアドレスが未登録です。管理者にお問い合わせください。'), 400
             conn.execute('BEGIN IMMEDIATE')
-            previous = conn.execute('SELECT last_sent_at FROM login_otp WHERE manager_id=?', (manager['id'],)).fetchone()
+            previous = conn.execute('SELECT last_sent_at, expires_at, attempts FROM login_otp WHERE manager_id=?', (manager['id'],)).fetchone()
+            # A valid password may resume an already-sent, unexpired OTP rather
+            # than being blocked by the email rate limit. Never reveal the code.
+            if previous and now < previous['expires_at'] and previous['attempts'] < 5:
+                session.clear()
+                session['pending_manager_id'] = manager['id']
+                session['otp_session_expires'] = previous['expires_at']
+                return redirect(url_for('verify_otp'))
             if previous and now - previous['last_sent_at'] < 60:
                 return render_template('login.html', error='認証コードの再送信は60秒後にお試しください。'), 429
             code = f'{secrets.randbelow(1000000):06d}'
@@ -352,6 +403,8 @@ def admin_choice():
 
 @app.route('/logout')
 def logout():
+    if session.get('role') == 'Administrator':
+        app.session_interface.revoke_admin(app, session)
     session.clear()
     return redirect(url_for('login'))
 
@@ -375,17 +428,20 @@ def student_submit(guest_mode=False):
     account_identifier = ('' if guest_mode else
                           (session.get('student_id') or session.get('username') or '').strip()
                           if teacher else ('' if guest_mode else (session.get('student_id') or '').strip()))
+    profile = {}
+    if authenticated:
+        with sqlite3.connect(app.config['DATABASE']) as profile_con:
+            profile_con.row_factory = sqlite3.Row
+            user = profile_con.execute("""SELECT student_id,name,department,school_class,course,number,phone
+                FROM managers WHERE id=? AND status='有効'""", (session.get('manager_id'),)).fetchone()
+            if user:
+                profile = dict(user)
+    reasons = ('授業の準備のため', '授業で使用するため', '実習・課題制作のため',
+               '教員からの指示', '忘れ物を取りに行くため', '学校行事のため')
     def page(status=200, **kwargs):
-        context = dict(
-            rooms=ROOMS,
-            actions=ACTIONS,
-            authenticated=authenticated,
-            teacher=teacher,
-            student_id=account_identifier,
-            csrf=session[csrf_key],
-            selected_room=ROOMS[0],
-            selected_action=ACTIONS[0]
-        )
+        context = dict(rooms=ROOMS, actions=ACTIONS, authenticated=authenticated,
+                       teacher=teacher, student_id=account_identifier,
+                       csrf=session[csrf_key], profile=profile, reasons=reasons)
         context.update(kwargs)
         html = render_template('student.html', **context)
         if guest_mode:
@@ -425,6 +481,11 @@ def student_submit(guest_mode=False):
     guest_name = request.form.get('guest_name', '').strip()
     room = request.form.get('key', '').strip()
     action = request.form.get('action', '').strip()
+    reason_choice = request.form.get('reason_choice', '').strip()
+    reason_detail = request.form.get('reason_detail', '').strip()
+    reason = reason_detail if reason_choice == 'その他' else reason_choice
+    if reason_choice not in reasons + ('その他',) or not 1 <= len(reason) <= 200:
+        return page(400, error='申請理由を選択・入力してください。')
     if room not in ROOMS or action not in ACTIONS:
         return '教室または操作の指定が正しくありません。', 400
 
@@ -474,29 +535,42 @@ def student_submit(guest_mode=False):
         source = ('教員Web申請' if teacher else '認証済Web申請') if authenticated else '未認証Web申請'
         # Preserve teacher name for the admin list even if no student roster record exists.
         display_name = account['name'] if authenticated and teacher else (guest_name if not authenticated else None)
-        cur = conn.execute("INSERT INTO requests(student_id,key,action,status,time,source,guest_name) VALUES (?,?,?,'申請中',?,?,?)",
-                           (identifier, room, action, now, source, display_name))
+        cur = conn.execute("INSERT INTO requests(student_id,key,action,status,time,source,guest_name,reason) VALUES (?,?,?,'申請中',?,?,?,?)",
+                           (identifier, room, action, now, source, display_name, reason))
         if instant:
             conn.execute("UPDATE requests SET status='承認',approved_at=?,execution_status='待機中' WHERE id=?",
                          (now, cur.lastrowid))
             issue_command(conn, room, action, 'verified_user', identifier, cur.lastrowid)
 
     session[csrf_key] = secrets.token_hex(24)
-    return page(
-        sent=True,
-        student_id=identifier,
-        selected_room=room,
-        selected_action=action,
-        message=(
-            '開錠指令を登録しました。装置の応答をお待ちください。'
-            if instant
-            else '申請を受け付けました。教員の承認をお待ちください。'
-        )
-    )[0]
+    return page(sent=True, student_id=identifier,
+                message=('開錠指令を登録しました。装置の応答をお待ちください。' if instant
+                         else '申請を受け付けました。教員の承認をお待ちください。'))[0]
 @app.route("/guest/student_submit", methods=["GET", "POST"])
 def guest_student_submit():
     # Public submission must NOT log out an Administrator or another account.
     return student_submit(guest_mode=True)
+
+@app.get('/api/door-status')
+def public_door_status():
+    # Public view: only classroom/device status, never personal access records.
+    # 'issued' acknowledges a command, not a physical lock sensor measurement.
+    with sqlite3.connect(app.config['DATABASE']) as con:
+        con.row_factory = sqlite3.Row
+        devices = read_device_status(con)
+        items = []
+        for room, device_id in ROOM_DEVICE.items():
+            device = devices.get(device_id, {})
+            cmd = con.execute("""SELECT action,finished_at FROM device_commands
+                  WHERE room=? AND state='issued' ORDER BY id DESC LIMIT 1""", (room,)).fetchone()
+            items.append(dict(room=room, online=bool(device.get('online')),
+                  last_seen=device.get('last_seen'),
+                  state=('locked' if cmd['action']=='閉める' else 'unlocked') if cmd else 'unknown',
+                  state_at=cmd['finished_at'] if cmd else None,
+                  verified_physical=False))
+    response = jsonify(rooms=items)
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 @app.route("/status", methods=["POST"])
 def status():

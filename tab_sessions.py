@@ -15,6 +15,8 @@ from flask.sessions import SecureCookieSession, SessionInterface
 
 TAB_RE = re.compile(r'^[a-f0-9]{32}$')
 COOKIE_NAME = 'tist_browser_id'
+ADMIN_SHARED_TAB = '__admin_shared__'
+
 
 
 def tab_redirect_location(target, req):
@@ -71,35 +73,115 @@ class TabSessionInterface(SessionInterface):
         if not isinstance(tab, str) or not TAB_RE.fullmatch(tab):
             tab = None
         data = {}
-        if tab:
-            with self._connect(app) as con:
+        with self._connect(app) as con:
+            shared = con.execute(
+                "SELECT data FROM browser_tab_sessions WHERE browser_id=? AND tab_id=?",
+                (browser_id, ADMIN_SHARED_TAB)
+            ).fetchone()
+            if shared:
+                try:
+                    candidate = json.loads(shared[0])
+                except (ValueError, TypeError):
+                    candidate = {}
+                if (candidate.get('logged_in') is True
+                    and candidate.get('role') == 'Administrator'
+                    and candidate.get('otp_verified') is True
+                    and int(candidate.get('auth_expires_at') or 0) > int(time.time())
+                    and candidate.get('admin_shared_nonce')):
+                    # Canonical Administrator session for every tab in this browser.
+                    data = candidate
+                else:
+                    con.execute('DELETE FROM browser_tab_sessions WHERE browser_id=? AND tab_id=?',
+                                (browser_id, ADMIN_SHARED_TAB))
+            if tab:
                 row = con.execute('SELECT data FROM browser_tab_sessions WHERE browser_id=? AND tab_id=?',
                                   (browser_id, tab)).fetchone()
                 if row:
                     try:
-                        data = json.loads(row[0])
+                        candidate = json.loads(row[0])
                     except (ValueError, TypeError):
-                        data = {}
+                        candidate = {}
+                    # Never resurrect an Admin login from a stale per-tab row.
+                    if candidate.get('role') != 'Administrator':
+                        data = candidate
         return PerTabSession(data, browser_id, tab, new_browser)
+
+    def publish_admin(self, app, session):
+        """Publish only after successful Administrator login, never from a random request."""
+        if (not isinstance(session, PerTabSession) or
+            session.get('role') != 'Administrator' or
+            not session.get('logged_in')):
+            raise ValueError('Administrator login required')
+        session['admin_shared_nonce'] = secrets.token_hex(24)
+        with self._connect(app) as con:
+            con.execute('''INSERT INTO browser_tab_sessions(browser_id,tab_id,data,updated_at)
+                VALUES(?,?,?,?) ON CONFLICT(browser_id,tab_id)
+                DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at''',
+                (session.browser_id, ADMIN_SHARED_TAB, json.dumps(dict(session)), int(time.time())))
+
+    def revoke_admin(self, app, session):
+        """Revoke the currently presented Admin login across the browser tabs."""
+        if not isinstance(session, PerTabSession):
+            return
+        nonce = session.get('admin_shared_nonce')
+        with self._connect(app) as con:
+            row = con.execute('SELECT data FROM browser_tab_sessions WHERE browser_id=? AND tab_id=?',
+                              (session.browser_id, ADMIN_SHARED_TAB)).fetchone()
+            if row:
+                try:
+                    active = json.loads(row[0])
+                except (ValueError, TypeError):
+                    active = {}
+                if nonce and active.get('admin_shared_nonce') == nonce:
+                    con.execute('DELETE FROM browser_tab_sessions WHERE browser_id=? AND tab_id=?',
+                                (session.browser_id, ADMIN_SHARED_TAB))
+            # Cleanup historic tab-local Administrator states (from old version).
+            rows = con.execute('SELECT tab_id,data FROM browser_tab_sessions WHERE browser_id=? AND tab_id!=?',
+                               (session.browser_id, ADMIN_SHARED_TAB)).fetchall()
+            for tab_id, raw in rows:
+                try:
+                    saved = json.loads(raw)
+                except (ValueError, TypeError):
+                    continue
+                if saved.get('role') == 'Administrator':
+                    con.execute('DELETE FROM browser_tab_sessions WHERE browser_id=? AND tab_id=?',
+                                (session.browser_id, tab_id))
 
     def save_session(self, app, session, response):
         if not isinstance(session, PerTabSession):
             return
-        if session.tab_id:
-            with self._connect(app) as con:
+        with self._connect(app) as con:
+            if session.get('role') == 'Administrator' and session.get('logged_in'):
+                # Update shared Admin only if its current nonce still matches.
+                # In-flight responses cannot recreate a logged-out Admin session.
+                row = con.execute('SELECT data FROM browser_tab_sessions WHERE browser_id=? AND tab_id=?',
+                                  (session.browser_id, ADMIN_SHARED_TAB)).fetchone()
+                if row:
+                    try:
+                        canonical = json.loads(row[0])
+                    except (ValueError, TypeError):
+                        canonical = {}
+                    if (canonical.get('admin_shared_nonce') and
+                        canonical.get('admin_shared_nonce') == session.get('admin_shared_nonce') and
+                        int(canonical.get('auth_expires_at') or 0) > int(time.time())):
+                        con.execute('UPDATE browser_tab_sessions SET data=?,updated_at=? WHERE browser_id=? AND tab_id=?',
+                                    (json.dumps(dict(session)), int(time.time()), session.browser_id, ADMIN_SHARED_TAB))
+                # Do not store Administrator authorization in tab rows.
+                if session.tab_id:
+                    con.execute('DELETE FROM browser_tab_sessions WHERE browser_id=? AND tab_id=?',
+                                (session.browser_id, session.tab_id))
+            elif session.tab_id:
                 if session:
                     con.execute('''INSERT INTO browser_tab_sessions(browser_id,tab_id,data,updated_at)
-                       VALUES(?,?,?,?) ON CONFLICT(browser_id,tab_id)
-                       DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at''',
+                        VALUES(?,?,?,?) ON CONFLICT(browser_id,tab_id)
+                        DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at''',
                         (session.browser_id, session.tab_id, json.dumps(dict(session)), int(time.time())))
                 else:
                     con.execute('DELETE FROM browser_tab_sessions WHERE browser_id=? AND tab_id=?',
                                 (session.browser_id, session.tab_id))
-                # Prune old empty/expired tab rows periodically (30 days).
-                if secrets.randbelow(200) == 0:
-                    con.execute('DELETE FROM browser_tab_sessions WHERE updated_at<?',
-                                (int(time.time()) - 60*60*24*30,))
-        # Never expose authentication data or tokens in cookies.
+            if secrets.randbelow(200) == 0:
+                con.execute('DELETE FROM browser_tab_sessions WHERE updated_at<?',
+                            (int(time.time()) - 60*60*24*30,))
         if session.new_browser:
             response.set_cookie(COOKIE_NAME, self._signer(app).dumps(session.browser_id),
                 max_age=60*60*24*30, httponly=True,

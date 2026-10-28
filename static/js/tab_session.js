@@ -1,11 +1,18 @@
 /* TIST LAB: each physical browser tab has its own selector (not a password). */
 (function () {
   'use strict';
+  if (window.__TIST_TAB_BOOTSTRAPPED__) return;
+  window.__TIST_TAB_BOOTSTRAPPED__ = true;
   const key = 'TIST_TAB_SESSION_ID_V1';
   let id = '';
   // window.name survives F5 and same-tab navigation; newly opened tabs get new name.
+  const fromURL = new URL(location.href).searchParams.get('_tab') || '';
   if (window.name && /^TIST_TAB_[a-f0-9]{32}$/.test(window.name)) {
     id = window.name.substring('TIST_TAB_'.length);
+  } else if (/^[a-f0-9]{32}$/.test(fromURL)) {
+    // A redirect created this URL in the same tab: keep the server selector.
+    id = fromURL;
+    window.name = 'TIST_TAB_' + id;
   } else {
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);

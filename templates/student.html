@@ -1,149 +1,43 @@
 <!doctype html>
 <html lang="ja">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>開錠申請｜TIST</title>
-    <style>
-      body {
-        font-family: sans-serif;
-        background: #f5f6f8;
-        margin: 0;
-        padding: 28px;
-      }
-      .card {
-        max-width: 560px;
-        margin: 20px auto;
-        background: white;
-        border-radius: 12px;
-        padding: 24px;
-        box-shadow: 0 2px 10px #0001;
-      }
-      label {
-        display: block;
-        margin: 16px 0 6px;
-        font-weight: 600;
-      }
-      input,
-      select,
-      button {
-        box-sizing: border-box;
-        width: 100%;
-        padding: 12px;
-        border: 1px solid #ccd3df;
-        border-radius: 7px;
-        font-size: 16px;
-      }
-      button {
-        background: #0783e8;
-        color: white;
-        border: 0;
-        margin-top: 20px;
-        font-weight: 600;
-      }
-      .msg {
-        color: #157a39;
-      }
-      .err {
-        color: #c21;
-      }
-      a {
-        color: #086ac1;
-      }
-    </style>
-    <script src="{{ url_for('static', filename='js/tab_session.js') }}"></script>
-  </head>
-  <body>
-    <main class="card">
-      <h2>開錠申請</h2>
-      <p>
-        {% if authenticated %}ログイン済み（教員の承認不要）{% else
-        %}ログインせずに申請できます（教員の承認が必要です）{% endif %}　<a
-          href="/login"
-          >ログイン</a
-        >　{% if authenticated %}<a href="/logout">ログアウト</a>{% endif %}
-      </p>
-      {% if error %}
-      <p class="err">{{ error }}</p>
-      {% endif %}{% if sent %}
-      <p class="msg">{{ message }}</p>
-      {% endif %}
-      <form method="post">
-        <input type="hidden" name="csrf" value="{{ csrf }}" />{% if not
-        authenticated %}<label>名前</label
-        ><input name="guest_name" maxlength="100" required />{% endif %}<label
-          >{{ "先生番号" if teacher else "学籍番号" }}</label
-        ><input
-          name="student_id"
-          value="{{ student_id or '' }}"
-          {%
-          if
-          authenticated
-          %}readonly{%
-          endif
-          %}
-          required
-        />
-        <label>教室</label>
-        <select name="key" id="roomSelect" required>
-            {% for room in rooms %}
-            <option value="{{ room }}"
-                {% if room == selected_room %}selected{% endif %}>
-                {{ room }}
-            </option>
-            {% endfor %}
-        </select>
-        <label>操作</label>
-        <select name="action" required>
-            {% for action in actions %}
-            <option value="{{ action }}"
-                {% if action == selected_action %}selected{% endif %}>
-                {{ action }}
-            </option>
-            {% endfor %}
-        </select>
-          <button>申請する</button>
-      </form>
-      <p>
-        ログインせずに申請した場合、本人確認済みではありません。申請は教員の承認後に処理されます。
-      </p>
-      <a href="/register">生徒新規登録</a>
-    </main>
-    <script>
-      document.addEventListener("DOMContentLoaded", function () {
-        const roomSelect = document.getElementById("roomSelect");
-
-        if (!roomSelect) return;
-
-        const storageKey = "TIST_SELECTED_ROOM";
-
-        // Khôi phục phòng đã chọn
-        const savedRoom = sessionStorage.getItem(storageKey);
-
-        if (savedRoom) {
-          const exists = Array.from(roomSelect.options).some(
-            (option) => option.value === savedRoom,
-          );
-
-          if (exists) {
-            roomSelect.value = savedRoom;
-          }
-        }
-
-        // Lưu phòng mỗi khi người dùng thay đổi
-        roomSelect.addEventListener("change", function () {
-          sessionStorage.setItem(storageKey, roomSelect.value);
-        });
-
-        // Lưu lại trước khi gửi yêu cầu
-        const form = roomSelect.closest("form");
-
-        if (form) {
-          form.addEventListener("submit", function () {
-            sessionStorage.setItem(storageKey, roomSelect.value);
-          });
-        }
-      });
-    </script>
-  </body>
-</html>
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>開錠申請 | TIST SmartLock</title>
+<script src="{{ url_for('static',filename='js/tab_session.js') }}"></script>
+<style>
+:root{font-family:Inter,'Noto Sans JP',system-ui,sans-serif;color:#142b4c;background:#f3f6fb}*{box-sizing:border-box}body{margin:0}a{color:#1671df;text-decoration:none}.top{height:68px;background:#fff;border-bottom:1px solid #e3ebf4;padding:0 max(24px,calc((100vw - 1220px)/2));display:flex;align-items:center;justify-content:space-between;gap:16px}.brand{display:flex;gap:12px;align-items:center;font-weight:800}.brand-icon{width:36px;height:36px;border-radius:10px;background:#1479e7;color:#fff;display:grid;place-items:center;font-size:21px}.sub{font-size:12px;font-weight:400;color:#7085a1}.top-right{display:flex;align-items:center;gap:12px}.pill{padding:10px 14px;border-radius:10px;background:#edf4fd;font-size:13px;font-weight:700}.logout{background:#176fe2;padding:10px 16px;color:white;border-radius:9px;font-size:13px;font-weight:700}.wrap{max-width:1220px;margin:25px auto;padding:0 20px}.layout{display:grid;grid-template-columns:minmax(0,1fr) 255px;gap:20px}.panel{background:#fff;border:1px solid #e9eef6;border-radius:18px;padding:24px;box-shadow:0 10px 26px rgba(37,72,126,.05);margin-bottom:20px}.section-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}.section-head h2{font-size:20px;margin:0}.section-head p{margin:4px 0 0;color:#7385a0;font-size:12px}.section-icon{width:39px;height:39px;background:#e7f1ff;color:#0875ec;border-radius:12px;display:grid;place-items:center;font-size:21px}.grow{flex:1}.refresh{border:1px solid #d6e8ff;border-radius:8px;background:#f1f7ff;color:#1677e7;padding:9px 13px;cursor:pointer;font-weight:700}.rooms{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.room{min-height:164px;position:relative;overflow:hidden;border-radius:13px;padding:13px;color:white;background:linear-gradient(130deg,#34475e,#192a44)}.room:before{content:'';position:absolute;inset:0;opacity:.14;background:repeating-linear-gradient(90deg,transparent 0 26px,#fff 27px 28px)}.room>*{position:relative}.room-name{font-size:19px;font-weight:800}.conn{float:right;font-size:10px;border-radius:30px;background:#1e9968;padding:5px 7px}.conn.off{background:#7a8596}.room-center{text-align:center;padding-top:8px}.lock-disc{margin:auto;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;background:#e34c58;font-size:25px}.room.unlocked .lock-disc{background:#14a669}.room.unknown .lock-disc,.room.offline .lock-disc{background:#8291a5}.room-state{font-weight:800;font-size:17px;margin-top:8px}.room-last{font-size:10px;color:#d3dfed;margin-top:5px}.notice{font-size:12px;color:#7687a0;margin:12px 0 0}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}.field{display:flex;flex-direction:column;gap:6px}.field.full{grid-column:1/-1}.field label{font-size:13px;font-weight:750}.req{font-size:10px;background:#ff6b7c;color:#fff;border-radius:4px;padding:2px 5px;margin-left:5px}input,select,textarea{font:inherit;font-size:14px;width:100%;min-width:0;border:1px solid #d4dfef;background:#fff;border-radius:9px;padding:11px 12px;color:#223c60}input[readonly]{background:#f1f5fa;color:#526782}textarea{resize:vertical;min-height:74px}.choices{display:flex;gap:8px}.choices label{flex:1;position:relative}.choices input{position:absolute;opacity:0;width:1px;height:1px}.choices span{display:block;text-align:center;border:1px solid #d9e4f1;background:#fff;border-radius:9px;padding:10px 5px;font-size:13px;font-weight:700;cursor:pointer}.choices input:checked+span{background:#1677e9;color:white;border-color:#1677e9}.submit{width:100%;border:0;border-radius:10px;background:linear-gradient(100deg,#329ff7,#0876e9);color:white;font-weight:800;font-size:15px;padding:14px;cursor:pointer}.banner{padding:12px 14px;border-radius:10px;background:#e8f9ee;color:#137042;margin-bottom:15px}.banner.error{background:#ffeded;color:#bc2834}.clock{font-size:35px;font-weight:850;margin:12px 0 0}.day{font-size:13px;color:#637c9b}.side h3{margin:0 0 12px;font-size:16px}.muted{color:#788ca5;font-size:12px;line-height:1.7}.side .panel{padding:20px}.note-row{padding:9px 0;border-bottom:1px solid #edf1f7;color:#506780;font-size:12px}.note-row:last-child{border:0}.right-label{margin-left:auto;font-size:12px;color:#3fa55c;font-weight:700}@media(max-width:1000px){.layout{grid-template-columns:1fr}.side{display:grid;grid-template-columns:1fr 1fr;gap:15px}.side .panel{margin:0}}@media(max-width:650px){.top{padding:0 15px;height:62px}.brand .sub{display:none}.top-right{gap:7px}.pill{padding:8px}.wrap{padding:0 12px;margin:15px auto}.panel{padding:16px}.rooms{grid-template-columns:repeat(2,minmax(0,1fr))}.form-grid{grid-template-columns:1fr}.field.full{grid-column:auto}.side{display:block}.side .panel{margin-bottom:14px}.section-head h2{font-size:18px}}
+</style>
+</head>
+<body>
+<header class="top"><div class="brand"><div class="brand-icon">▣</div><div>TIST <span style="font-weight:400;color:#b8c7d9">│</span> <span class="sub">ITデジタル学科 教室ドア管理システム</span></div></div><div class="top-right">{% if authenticated %}<span class="pill">◉ {{ student_id }}</span><a class="logout" href="{{ url_for('logout') }}">ログアウト</a>{% else %}<a class="logout" href="{{ url_for('login') }}">ログイン</a>{% endif %}</div></header>
+<main class="wrap"><div class="layout"><div>
+<section class="panel"><div class="section-head"><div class="section-icon">🚪</div><div class="grow"><h2>教室のドア状態</h2><p>各教室の装置状態を確認できます。自動更新されます。</p></div><button type="button" class="refresh" id="refresh">↻ 更新</button></div><div id="rooms" class="rooms"><div class="muted">読み込み中...</div></div><p class="notice">※ 表示する施錠・開錠は最後に報告された操作指令の状態です。実際のドア開閉・施錠をセンサーで確認したものではありません。</p></section>
+<section class="panel"><div class="section-head"><div class="section-icon">✎</div><div><h2>開錠申請</h2><p>{% if authenticated %}登録情報は自動入力されます。{% else %}未ログインの場合、教員の承認が必要です。{% endif %}</p></div></div>
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}{% if sent %}<div class="banner">{{ message }}</div>{% endif %}
+<form method="post" id="requestForm"><input type="hidden" name="csrf" value="{{ csrf }}"><div class="form-grid">
+<div class="field"><label>{{ '先生番号' if teacher else '学籍番号' }} <span class="req">必須</span></label><input name="student_id" value="{{ student_id or '' }}" {% if authenticated %}readonly{% else %}required maxlength="64"{% endif %}></div>
+<div class="field"><label>氏名 <span class="req">必須</span></label>{% if authenticated %}<input readonly value="{{ profile.get('name','') }}">{% else %}<input name="guest_name" required maxlength="100" placeholder="氏名を入力">{% endif %}</div>
+{% if authenticated %}<div class="field"><label>学科</label><input readonly value="{{ profile.get('department') or '' }}"></div><div class="field"><label>クラス</label><input readonly value="{{ profile.get('school_class') or '' }}"></div><div class="field"><label>出席番号</label><input readonly value="{{ profile.get('number') if profile.get('number') is not none else '' }}"></div><div class="field"><label>電話番号</label><input readonly value="{{ profile.get('phone') or '' }}"></div>{% endif %}
+<div class="field"><label>教室 <span class="req">必須</span></label><div class="choices" id="roomChoices">{% for room in rooms %}<label><input type="radio" name="key" value="{{ room }}" {% if loop.first %}checked{% endif %} required><span>{{ room }}</span></label>{% endfor %}</div></div>
+<div class="field"><label>操作 <span class="req">必須</span></label><div class="choices">{% for action in actions %}<label><input type="radio" name="action" value="{{ action }}" {% if loop.first %}checked{% endif %} required><span>{{ '🔓 ' if action == '開ける' else '🔒 ' }}{{ action }}</span></label>{% endfor %}</div></div>
+<div class="field full"><label for="reason">申請理由 <span class="req">必須</span></label><select name="reason_choice" id="reason" required><option value="" selected disabled>申請理由を選択してください</option>{% for reason in reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}<option value="その他">その他（自由入力）</option></select></div>
+<div class="field full" id="otherBox" hidden><label for="otherReason">その他の理由</label><textarea name="reason_detail" id="otherReason" maxlength="200" placeholder="理由を入力してください"></textarea></div>
+<div class="field full"><button class="submit" type="submit">➤ 申請する</button></div></div></form>
+<p class="muted">{% if not authenticated %}ログインせずに申請した場合、本人確認は行われず、教員による承認後に処理されます。 <a href="{{ url_for('register') }}">生徒新規登録</a>{% else %}申請結果は装置からの応答によって確認してください。{% endif %}</p></section></div>
+<aside class="side"><section class="panel"><h3>▦ 日付・時刻</h3><div class="day" id="dateDisplay">--</div><div class="clock" id="clockDisplay">--:--:--</div><div class="muted">日本標準時 (JST)</div></section><section class="panel"><h3>ⓘ システム情報</h3><div class="note-row">● 接続状態は定期的に更新</div><div class="note-row">● 申請は履歴に記録されます</div><div class="note-row">● 登録済み情報は自動表示</div></section></aside>
+</div></main>
+<script>
+(function(){
+ const reason=document.getElementById('reason'),other=document.getElementById('otherReason'),box=document.getElementById('otherBox');
+ function reasonToggle(){let yes=reason.value==='その他';box.hidden=!yes;other.required=yes;if(!yes)other.value=''}reason.addEventListener('change',reasonToggle);reasonToggle();
+ const roomInputs=[...document.querySelectorAll('input[name="key"]')];
+ try{const v=sessionStorage.getItem('TIST_SELECTED_ROOM');const r=roomInputs.find(x=>x.value===v);if(r)r.checked=true;}catch(e){}
+ roomInputs.forEach(r=>r.addEventListener('change',()=>{if(r.checked)try{sessionStorage.setItem('TIST_SELECTED_ROOM',r.value)}catch(e){}}));
+ const date=document.getElementById('dateDisplay'),clock=document.getElementById('clockDisplay');
+ function tick(){let d=new Date();date.textContent=new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo',year:'numeric',month:'long',day:'numeric',weekday:'short'}).format(d);clock.textContent=new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d)}tick();setInterval(tick,1000);
+ const target=document.getElementById('rooms');let controller=null;
+ function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+ async function update(){if(controller)controller.abort();controller=new AbortController();try{const response=await fetch('{{ url_for('public_door_status') }}',{cache:'no-store',signal:controller.signal});if(!response.ok)throw Error('HTTP '+response.status);const json=await response.json();target.innerHTML=(json.rooms||[]).map(d=>{const online=d.online;const state=online?d.state:'offline';const label=state==='locked'?'施錠指令済み':state==='unlocked'?'開錠指令済み':state==='offline'?'接続なし':'状態不明';const icon=state==='locked'?'🔒':state==='unlocked'?'🔓':'—';return `<div class="room ${esc(state)}"><div><span class="room-name">${esc(d.room)}</span><span class="conn ${online?'':'off'}">${online?'オンライン':'オフライン'}</span></div><div class="room-center"><div class="lock-disc">${icon}</div><div class="room-state">${label}</div><div class="room-last">最終接続: ${esc(d.last_seen||'記録なし')}</div></div></div>`}).join('')||'<div>利用可能な教室がありません</div>';}catch(e){if(e.name!=='AbortError')target.innerHTML='<div class="muted">状態の取得に失敗しました。更新を押してください。</div>';}}
+ document.getElementById('refresh').addEventListener('click',update);update();setInterval(update,10000);
+})();
+</script></body></html>
