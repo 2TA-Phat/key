@@ -1,5 +1,11 @@
+
 # Gmail credentials
 secrets/
+gmail_token*.json
+gmail_client.json
+
+# ESP32 device tokens
+tist_device_tokens.ps1
 
 # Python
 __pycache__/
@@ -13,8 +19,5 @@ database.db
 .env
 .env.*
 
-Add-Content .gitignore "`n# Private credentials"
-Add-Content .gitignore "tist_device_tokens.ps1"
-Add-Content .gitignore "secrets/"
-Add-Content .gitignore ".env"
-Add-Content .gitignore "app.db"
+# Backups
+app_backup.py

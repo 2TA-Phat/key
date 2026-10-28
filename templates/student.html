@@ -20,7 +20,7 @@
 {% if authenticated %}<div class="field"><label>学科</label><input readonly value="{{ profile.get('department') or '' }}"></div><div class="field"><label>クラス</label><input readonly value="{{ profile.get('school_class') or '' }}"></div><div class="field"><label>出席番号</label><input readonly value="{{ profile.get('number') if profile.get('number') is not none else '' }}"></div><div class="field"><label>電話番号</label><input readonly value="{{ profile.get('phone') or '' }}"></div>{% endif %}
 <div class="field"><label>教室 <span class="req">必須</span></label><div class="choices" id="roomChoices">{% for room in rooms %}<label><input type="radio" name="key" value="{{ room }}" {% if loop.first %}checked{% endif %} required><span>{{ room }}</span></label>{% endfor %}</div></div>
 <div class="field"><label>操作 <span class="req">必須</span></label><div class="choices">{% for action in actions %}<label><input type="radio" name="action" value="{{ action }}" {% if loop.first %}checked{% endif %} required><span>{{ '🔓 ' if action == '開ける' else '🔒 ' }}{{ action }}</span></label>{% endfor %}</div></div>
-<div class="field full"><label for="reason">申請理由 <span class="req">必須</span></label><select name="reason_choice" id="reason" required><option value="" selected disabled>申請理由を選択してください</option>{% for reason in reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}<option value="その他">その他（自由入力）</option></select></div>
+<div class="field full"><label for="reason">申請理由 <span class="req">必須</span></label><select name="reason_choice" id="reason" required><option value="" selected disabled>申請理由を選択してください</option></select></div>
 <div class="field full" id="otherBox" hidden><label for="otherReason">その他の理由</label><textarea name="reason_detail" id="otherReason" maxlength="200" placeholder="理由を入力してください"></textarea></div>
 <div class="field full"><button class="submit" type="submit">➤ 申請する</button></div></div></form>
 <p class="muted">{% if not authenticated %}ログインせずに申請した場合、本人確認は行われず、教員による承認後に処理されます。 <a href="{{ url_for('register') }}">生徒新規登録</a>{% else %}申請結果は装置からの応答によって確認してください。{% endif %}</p></section></div>
@@ -29,7 +29,23 @@
 <script>
 (function(){
  const reason=document.getElementById('reason'),other=document.getElementById('otherReason'),box=document.getElementById('otherBox');
- function reasonToggle(){let yes=reason.value==='その他';box.hidden=!yes;other.required=yes;if(!yes)other.value=''}reason.addEventListener('change',reasonToggle);reasonToggle();
+ const reasonChoices={
+  '開ける': ['授業の準備のため','授業で使用するため','実習・課題制作のため','教員からの指示','忘れ物を取りに行くため','学校行事のため'],
+  '閉める': ['授業終了のため','教室の使用終了のため','安全確認・防犯のため','教員からの指示','学校行事終了のため']
+ };
+ const operations=[...document.querySelectorAll('input[name="action"]')];
+ function reasonToggle(){const yes=reason.value==='その他';box.hidden=!yes;other.required=yes;if(!yes)other.value='';}
+ function updateReasons(){
+  const selected=operations.find(x=>x.checked)?.value || '開ける';
+  reason.replaceChildren(new Option('申請理由を選択してください','',true,true));
+  reason.options[0].disabled=true;
+  for(const text of [...reasonChoices[selected],'その他']){
+   reason.add(new Option(text==='その他'?'その他（自由入力）':text,text));
+  }
+  reason.value='';reasonToggle();
+ }
+ operations.forEach(x=>x.addEventListener('change',updateReasons));
+ reason.addEventListener('change',reasonToggle);updateReasons();
  const roomInputs=[...document.querySelectorAll('input[name="key"]')];
  try{const v=sessionStorage.getItem('TIST_SELECTED_ROOM');const r=roomInputs.find(x=>x.value===v);if(r)r.checked=true;}catch(e){}
  roomInputs.forEach(r=>r.addEventListener('change',()=>{if(r.checked)try{sessionStorage.setItem('TIST_SELECTED_ROOM',r.value)}catch(e){}}));

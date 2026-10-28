@@ -436,8 +436,11 @@ def student_submit(guest_mode=False):
                 FROM managers WHERE id=? AND status='有効'""", (session.get('manager_id'),)).fetchone()
             if user:
                 profile = dict(user)
-    reasons = ('授業の準備のため', '授業で使用するため', '実習・課題制作のため',
-               '教員からの指示', '忘れ物を取りに行くため', '学校行事のため')
+    open_reasons = ('授業の準備のため', '授業で使用するため', '実習・課題制作のため',
+                    '教員からの指示', '忘れ物を取りに行くため', '学校行事のため')
+    close_reasons = ('授業終了のため', '教室の使用終了のため', '安全確認・防犯のため',
+                     '教員からの指示', '学校行事終了のため')
+    reasons = open_reasons
     def page(status=200, **kwargs):
         context = dict(rooms=ROOMS, actions=ACTIONS, authenticated=authenticated,
                        teacher=teacher, student_id=account_identifier,
@@ -484,10 +487,11 @@ def student_submit(guest_mode=False):
     reason_choice = request.form.get('reason_choice', '').strip()
     reason_detail = request.form.get('reason_detail', '').strip()
     reason = reason_detail if reason_choice == 'その他' else reason_choice
-    if reason_choice not in reasons + ('その他',) or not 1 <= len(reason) <= 200:
-        return page(400, error='申請理由を選択・入力してください。')
     if room not in ROOMS or action not in ACTIONS:
         return '教室または操作の指定が正しくありません。', 400
+    allowed_reasons = open_reasons if action == '開ける' else close_reasons
+    if reason_choice not in allowed_reasons + ('その他',) or not 1 <= len(reason) <= 200:
+        return page(400, error='申請理由を選択・入力してください。')
 
     # Never trust a client-supplied identifier for an authenticated user.
     identifier = account_identifier if authenticated else requested_id
