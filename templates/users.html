@@ -307,77 +307,21 @@
             "
           >
             <thead>
-              <tr
-                style="
-                  background-color: #f8f9fa;
-                  border-bottom: 2px solid #dee2e6;
-                "
-              >
-                <th style="padding: 12px">学籍番号</th>
-
-                <th style="padding: 12px">初回出現日時</th>
-
-                <th style="padding: 12px">最終ログイン日時</th>
-
-                <th style="padding: 12px">処理状況</th>
-
-                <th style="padding: 12px">未処理数</th>
-
-                <th style="padding: 12px">完了数</th>
+              <tr style="background-color:#f8f9fa;border-bottom:2px solid #dee2e6">
+                <th style="padding:12px">学籍番号</th>
+                <th style="padding:12px">最終ログイン日時</th>
+                <th style="padding:12px">最終ログアウト日時</th>
               </tr>
             </thead>
-
             <tbody>
               {% for user in users %}
-
-              <tr style="border-bottom: 1px solid #dee2e6">
-                <td style="padding: 10px 12px">{{ user.contact_id }}</td>
-
-                <td style="padding: 10px 12px">
-                  {{ user.first_login if user.first_login else '-' }}
-                </td>
-
-                <td style="padding: 10px 12px">
-                  {{ user.last_login if user.last_login else '-' }}
-                </td>
-
-                <td style="padding: 10px 12px">
-                  {% if user.process_status == '未処理' %}
-
-                  <span
-                    class="badge-admin"
-                    style="background-color: #ffc107; color: #212529"
-                  >
-                    未処理
-                  </span>
-
-                  {% else %}
-
-                  <span class="badge-admin" style="background-color: #28a745">
-                    完了
-                  </span>
-
-                  {% endif %}
-                </td>
-
-                <td style="padding: 10px 12px">
-                  {{ user.pending_count or 0 }}
-                </td>
-
-                <td style="padding: 10px 12px">{{ user.done_count or 0 }}</td>
+              <tr style="border-bottom:1px solid #dee2e6">
+                <td style="padding:10px 12px">{{ user.contact_id }}</td>
+                <td style="padding:10px 12px">{{ user.last_login or '-' }}</td>
+                <td style="padding:10px 12px">{{ user.last_logout or '-' }}</td>
               </tr>
-
               {% else %}
-
-              <tr>
-                <td
-                  colspan="6"
-                  style="text-align: center; color: #888; padding: 20px"
-                >
-                  データが存在しません。
-                </td>
-              </tr>
-
+              <tr><td colspan="3" style="text-align:center;color:#888;padding:20px">ログイン履歴がありません。</td></tr>
               {% endfor %}
             </tbody>
           </table>

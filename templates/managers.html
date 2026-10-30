@@ -250,16 +250,13 @@
                                 編集
                             </a>
 
-                            <a
-                                href="/admin/managers/{{ m.id }}/delete"
-                                class="btn-delete"
-                                onclick="
-                                    return confirm(
-                                        'この管理者を削除しますか？'
-                                    );
-                                ">
+                            {% if can_delete and m.username != 'Admin' %}
+                            <button type="button" class="btn-delete"
+                                    style="border:0;cursor:pointer;font-size:inherit"
+                                    onclick="openDeleteDialog({{ m.id }}, {{ m.username|tojson }})">
                                 削除
-                            </a>
+                            </button>
+                            {% endif %}
 
                         </td>
 
@@ -342,5 +339,31 @@
 
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 
+{% if can_delete %}
+<dialog id="delete-dialog" aria-labelledby="delete-dialog-title" style="border:1px solid #ddd;border-radius:9px;padding:24px;max-width:420px;width:90%;box-shadow:0 10px 35px #0004">
+  <h3 id="delete-dialog-title">管理者アカウントの削除</h3>
+  <p>対象: <strong id="delete-target"></strong></p>
+  <p style="color:#b42318">この操作は取り消せません。削除前にAdminのパスワードをもう一度入力してください。</p>
+  <form id="delete-form" method="post">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label for="confirm-password">Adminパスワード</label>
+    <input id="confirm-password" name="confirm_password" type="password" required autocomplete="current-password"
+           style="display:block;width:100%;box-sizing:border-box;padding:10px;margin:9px 0 18px">
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button type="button" onclick="document.getElementById('delete-dialog').close()">キャンセル</button>
+      <button type="submit" style="background:#dc3545;color:white;border:0;border-radius:4px;padding:9px 16px">削除を確定</button>
+    </div>
+  </form>
+</dialog>
+<script>
+function openDeleteDialog(id, username) {
+  const dialog = document.getElementById('delete-dialog');
+  document.getElementById('delete-target').textContent = username + ' (ID: ' + id + ')';
+  document.getElementById('delete-form').action = '/admin/managers/' + id + '/delete';
+  document.getElementById('confirm-password').value = '';
+  dialog.showModal();
+}
+</script>
+{% endif %}
 </body>
 </html>

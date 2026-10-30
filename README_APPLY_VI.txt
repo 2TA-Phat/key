@@ -38,3 +38,26 @@ Changes:
 
 Do NOT share any credentials or commit secrets/. The supplied tab_sessions.py is identical to uploaded file.
 
+30/10/2026
+SUA LOI TRANG USER - TIST SMARTLOCK
+
+1. Sao luu toan bo project va app.db truoc khi thay doi.
+2. Chep app.py vao thu muc goc project, ghi de file cu.
+3. Chep templates/users.html vao thu muc templates/, ghi de file cu.
+4. Khoi dong lai Flask. init_db() tu tao bang login_history (khong xoa database cu).
+5. Dang nhap bang tai khoan hoc sinh, xac nhan OTP, sau do logout bang nut dang xuat. Kiem tra /users bang tai khoan Administrator.
+6. Bang users hien so hoc sinh TUNG DANG NHAP KE TU KHI CAP NHAT. Khong the suy ra lich su login cu tu requests.
+7. Dang xuat bang nut Logout duoc ghi manual; het han 5 phut/3 gio chi duoc ghi 'expired' khi co request tiep theo. Dong tab/mat ket noi khong phai logout va khong duoc ghi gia la logout.
+8. Dang nhap admin cung duoc luu vao login_history de kiem toan, nhung khong hien o trang users.
+
+CHU Y: Goi ZIP nay CHI CO HAI FILE SUA DOI, khong co DB, Gmail tokens, .git hay cac secret cua ban.
+
+CAP NHAT 30/10 - XOA TAI KHOAN QUAN LY
+- Them file templates/managers.html. Chep de file templates/managers.html cu.
+- Chi tai khoan username chinh xac 'Admin', role Administrator, status 有効 moi duoc xoa.
+- Nhap lai mat khau Admin o hop thoai, backend verify password hash, CSRF va session.
+- Khong cho xoa tai khoan Admin. Nut xoa gui POST thay vi GET (nguyen nhan nut cu khong hoat dong).
+- Khi sai mat khau/khong du quyen, server tra ve loi va khong xoa ban ghi.
+- Sau khi thay app.py, users.html, managers.html, restart Flask.
+- Neu muon cap quyen xoa cho account khac, can chinh dieu kien username tai backend; khong nen chi sua giao dien.
+

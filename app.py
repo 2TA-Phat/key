@@ -135,6 +135,17 @@ def init_db():
         created_at INTEGER NOT NULL
     )""")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_guest_limits_time ON guest_request_limits(created_at)")
+    cur.execute("""CREATE TABLE IF NOT EXISTS login_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        manager_id INTEGER NOT NULL,
+        student_id TEXT,
+        session_token TEXT NOT NULL UNIQUE,
+        login_at TEXT NOT NULL,
+        logout_at TEXT,
+        logout_reason TEXT
+    )""")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_login_history_student ON login_history(student_id, login_at)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_login_history_manager ON login_history(manager_id, login_at)")
     conn.commit()
     conn.close()
 
@@ -225,6 +236,26 @@ def is_admin():
     return bool(session.get('logged_in') and session.get('role') in ADMIN_ROLES)
 
 
+def record_logout(reason='manual'):
+    """Close only the currently authenticated login, never other browser tabs."""
+    token = session.get('login_history_token')
+    if token:
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            conn.execute("""UPDATE login_history SET logout_at=?, logout_reason=?
+                WHERE session_token=? AND logout_at IS NULL""",
+                (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), reason, token))
+
+
+def log_successful_login(manager):
+    """Store a row only after password/OTP authentication completes."""
+    token = secrets.token_hex(24)
+    with sqlite3.connect(app.config['DATABASE']) as conn:
+        conn.execute("""INSERT INTO login_history(manager_id,student_id,session_token,login_at)
+            VALUES(?,?,?,?)""", (manager['id'], manager['student_id'], token,
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    session['login_history_token'] = token
+
+
 def complete_login(manager):
     """Administrator: absolute 3 hours; other accounts: absolute 5 minutes."""
     session.clear()
@@ -240,6 +271,7 @@ def complete_login(manager):
         auth_expires_at=int(time.time()) + (3 * 3600 if manager['role'] == 'Administrator' else 300),
     )
     session['csrf'] = secrets.token_hex(24)
+    log_successful_login(manager)
     if manager['role'] == 'Administrator':
         app.session_interface.publish_admin(app, session)
 
@@ -293,6 +325,7 @@ def admin_access_control():
     if session.get('logged_in'):
         # All roles use absolute timeouts: Administrator 3 hours, others 5 minutes.
         if int(time.time()) >= session.get('auth_expires_at', 0):
+            record_logout('expired')
             if session.get('role') == 'Administrator':
                 app.session_interface.revoke_admin(app, session)
             session.clear()
@@ -302,6 +335,7 @@ def admin_access_control():
             with sqlite3.connect(app.config['DATABASE']) as con:
                 info = con.execute("SELECT status,role FROM managers WHERE id=?", (session.get('manager_id'),)).fetchone()
             if not info or info[0] != '有効' or info[1] != session.get('role') or not session.get('otp_verified'):
+                record_logout('revoked')
                 if session.get('role') == 'Administrator':
                     app.session_interface.revoke_admin(app, session)
                 session.clear()
@@ -403,6 +437,7 @@ def admin_choice():
 
 @app.route('/logout')
 def logout():
+    record_logout('manual')
     if session.get('role') == 'Administrator':
         app.session_interface.revoke_admin(app, session)
     session.clear()
@@ -701,109 +736,48 @@ def student_approvals():
             FROM managers WHERE role='Student' AND status='承認待ち' ORDER BY id""").fetchall()
     return render_template('student_approvals.html', pending=pending, csrf=session['csrf'], error=error)
 
-# --- ユーザー画面 ---
-@app.route("/users")
+# --- ユーザー画面: authenticated logins only; never infer login from requests ---
+@app.route('/users')
 def users():
-    if not session.get("logged_in"):
-        return redirect("/login")
+    if not is_admin():
+        return redirect(url_for('login')) if not session.get('logged_in') else ('アクセス権限がありません。', 403)
 
-    # Điều kiện từ form GET /users?contact_id=...&date_from=...&date_to=...
-    contact_id = request.args.get("contact_id", "").strip()
-    date_from = request.args.get("date_from", "").strip()
-    date_to = request.args.get("date_to", "").strip()
-
-    # Giới hạn ngày an toàn và tránh lỗi khi truy vấn.
+    contact_id = request.args.get('contact_id', '').strip()
+    date_from = request.args.get('date_from', '').strip()
+    date_to = request.args.get('date_to', '').strip()
     for value in (date_from, date_to):
         if value:
             try:
-                datetime.strptime(value, "%Y-%m-%d")
+                datetime.strptime(value, '%Y-%m-%d')
             except ValueError:
-                return "日付の形式が正しくありません。", 400
+                return '日付の形式が正しくありません。', 400
 
-    conn = sqlite3.connect(app.config["DATABASE"])
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-
-    # Tính thời gian đầu/cuối và tổng số yêu cầu trên TOÀN BỘ lịch sử.
-    # Chỉ dùng EXISTS để xác định học sinh có yêu cầu trong khoảng ngày lọc.
-    where_conditions = []
+    # Date range applies to login events, not request submissions.
+    filters = ["m.role = 'Student'", "h.student_id IS NOT NULL", "h.student_id != ''"]
     params = []
     if contact_id:
-        escaped_id = contact_id.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        where_conditions.append("s.student_id LIKE ? ESCAPE '\\'")
-        params.append("%" + escaped_id + "%")
-
-    # if date_from or date_to:
-    #     conditions = ["rf.student_id = s.student_id"]
-    #     if date_from:
-    #         conditions.append("rf.time >= ?")
-    #         params.append(date_from + " 00:00:00")
-    #     if date_to:
-    #         from datetime import timedelta
-    #         next_day = (datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-    #         conditions.append("rf.time < ?")
-    #         params.append(next_day + " 00:00:00")
-    #     where_conditions.append("EXISTS (SELECT 1 FROM requests rf WHERE " + " AND ".join(conditions) + ")")
-
-    sql = """
-        SELECT
-            s.student_id AS contact_id,
-            COALESCE(NULLIF(r.guest_name, ''), s.name) AS name, s.department, s.course, s.class, s.number,
-            MIN(r.time) AS first_login,
-            MAX(r.time) AS last_login,
-            SUM(CASE WHEN r.status = '申請中' THEN 1 ELSE 0 END) AS pending_count,
-            SUM(CASE WHEN r.status IN ('承認', '却下') THEN 1 ELSE 0 END) AS done_count
-        FROM students s
-        LEFT JOIN requests r ON s.student_id = r.student_id
-    """
-    if where_conditions:
-        sql += " WHERE " + " AND ".join(where_conditions)
-
-    sql += " GROUP BY s.student_id HAVING 1=1"
-
+        escaped = contact_id.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        filters.append("h.student_id LIKE ? ESCAPE '\\'")
+        params.append('%' + escaped + '%')
     if date_from:
-        sql += " AND DATE(MIN(r.time)) >= ?"
+        filters.append('DATE(h.login_at) >= ?')
         params.append(date_from)
-
     if date_to:
-        sql += " AND DATE(MIN(r.time)) <= ?"
+        filters.append('DATE(h.login_at) <= ?')
         params.append(date_to)
-
-    sql += " ORDER BY last_login DESC, s.student_id ASC"
-    print("SQL ĐANG CHẠY:", sql, flush=True)
-    print("PARAMS:", params, flush=True)
-
-    cur.execute(sql, params)
-    rows = cur.fetchall()
-    conn.close()
-
-    user_list = []
-    total_pending = 0
-    total_done = 0
-
-    for row in rows:
-        item = dict(row)
-        
-        p_count = item["pending_count"] or 0
-        d_count = item["done_count"] or 0
-        
-        total_pending += p_count
-        total_done += d_count
-
-        if p_count > 0:
-            item["process_status"] = "未処理"
-        else:
-            item["process_status"] = "完了"
-
-        user_list.append(item)
-
-    return render_template(
-        "users.html", 
-        users=user_list, 
-        total_users=len(user_list),
-        total_pending=total_pending,
-        total_done=total_done
-    )
+    sql = """SELECT h.student_id AS contact_id,
+               MAX(h.login_at) AS last_login,
+               (SELECT hh.logout_at FROM login_history hh
+                WHERE hh.student_id = h.student_id AND hh.logout_at IS NOT NULL
+                ORDER BY hh.logout_at DESC LIMIT 1) AS last_logout
+             FROM login_history h
+             JOIN managers m ON m.id = h.manager_id
+             WHERE """ + ' AND '.join(filters) + """
+             GROUP BY h.student_id ORDER BY last_login DESC, h.student_id ASC"""
+    with sqlite3.connect(app.config['DATABASE']) as conn:
+        conn.row_factory = sqlite3.Row
+        user_list = [dict(row) for row in conn.execute(sql, params).fetchall()]
+    return render_template('users.html', users=user_list, total_users=len(user_list))
 
 # --- 先生画面 ---
 @app.route("/admin")
@@ -915,7 +889,12 @@ def admin_managers():
     conn.close()
 
     managers = [dict(row) for row in rows]
-    return render_template("managers.html", managers=managers)
+    # Only the exact Admin account may delete users.
+    current = next((m for m in managers if m['id'] == session.get('manager_id')), None)
+    can_delete = bool(current and current['username'] == 'Admin' and
+                      current['role'] == 'Administrator' and current['status'] == '有効')
+    return render_template("managers.html", managers=managers,
+                           can_delete=can_delete, csrf=session.get("csrf") or init_csrf())
 # --- 管理者追加 ---
 @app.route("/admin/managers/add", methods=["GET", "POST"])
 def manager_add():
@@ -1083,25 +1062,42 @@ def manager_edit(manager_id):
 # --- 管理者削除 ---
 @app.route("/admin/managers/<int:manager_id>/delete", methods=["POST"])
 def manager_delete(manager_id):
+    # Authorize on the server, not just by hiding the button.
+    if (not session.get('logged_in') or not session.get('otp_verified') or
+            session.get('role') != 'Administrator'):
+        return 'アクセス権限がありません。', 403
     from rfid_api import valid_csrf
     if not valid_csrf():
-        return "認証エラー", 403
+        return '認証エラー (CSRF)', 403
+    password = request.form.get('confirm_password', '')
+    if not password:
+        return '削除するには管理者パスワードが必要です。', 400
 
-    if session.get("manager_id") == manager_id:
-        return redirect("/admin/managers")
-
-    conn = sqlite3.connect(app.config["DATABASE"])
-    cur = conn.cursor()
-
-    cur.execute(
-        "DELETE FROM managers WHERE id=?",
-        (manager_id,)
-    )
-
-    conn.commit()
-    conn.close()
-
-    return redirect("/admin/managers")
+    with sqlite3.connect(app.config['DATABASE']) as conn:
+        conn.row_factory = sqlite3.Row
+        # Re-read account status and role; session claims alone are insufficient.
+        actor = conn.execute(
+            'SELECT id, username, password, role, status FROM managers WHERE id=?',
+            (session.get('manager_id'),)).fetchone()
+        if not actor or actor['username'] != 'Admin' or actor['role'] != 'Administrator' or actor['status'] != '有効':
+            return '削除できるのはAdminアカウントのみです。', 403
+        if not actor['password'] or not check_password_hash(actor['password'], password):
+            return '管理者パスワードが正しくありません。削除されませんでした。', 403
+        # Protect the signed-in administrator and the named Admin account.
+        target = conn.execute('SELECT id, username FROM managers WHERE id=?', (manager_id,)).fetchone()
+        if target is None:
+            return '対象のアカウントが見つかりません。', 404
+        if manager_id == actor['id'] or target['username'] == 'Admin':
+            return 'Adminアカウントは削除できません。', 403
+        # Prevent dangling relational references when SQLite foreign keys are enabled.
+        try:
+            conn.execute('BEGIN IMMEDIATE')
+            conn.execute('DELETE FROM managers WHERE id=?', (manager_id,))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            return '関連データが存在するため削除できません。先に関連データを確認してください。', 409
+    return redirect(url_for('admin_managers'))
 
 @app.route('/admin/access-settings', methods=['GET', 'POST'])
 def access_settings():
