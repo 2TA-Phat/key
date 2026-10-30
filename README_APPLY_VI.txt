@@ -61,3 +61,4 @@ CAP NHAT 30/10 - XOA TAI KHOAN QUAN LY
 - Sau khi thay app.py, users.html, managers.html, restart Flask.
 - Neu muon cap quyen xoa cho account khac, can chinh dieu kien username tai backend; khong nen chi sua giao dien.
 
+Update: Delete confirmation now uses CSS :target (no JavaScript required). Click red button, enter Admin password, confirm.

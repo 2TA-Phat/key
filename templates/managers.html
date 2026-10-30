@@ -73,7 +73,7 @@
 </style>
 <script src="{{ url_for('static', filename='js/tab_session.js') }}"></script></head>
 
-<body>
+<body id="manager-list">
 
 <!-- SIDEBAR -->
 <div class="sidebar">
@@ -251,11 +251,7 @@
                             </a>
 
                             {% if can_delete and m.username != 'Admin' %}
-                            <button type="button" class="btn-delete"
-                                    style="border:0;cursor:pointer;font-size:inherit"
-                                    onclick="openDeleteDialog({{ m.id }}, {{ m.username|tojson }})">
-                                削除
-                            </button>
+                            <a class="btn-delete" href="#delete-confirm-{{ m.id }}" aria-label="{{ m.username }} を削除">削除</a>
                             {% endif %}
 
                         </td>
@@ -340,30 +336,38 @@
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 
 {% if can_delete %}
-<dialog id="delete-dialog" aria-labelledby="delete-dialog-title" style="border:1px solid #ddd;border-radius:9px;padding:24px;max-width:420px;width:90%;box-shadow:0 10px 35px #0004">
-  <h3 id="delete-dialog-title">管理者アカウントの削除</h3>
-  <p>対象: <strong id="delete-target"></strong></p>
-  <p style="color:#b42318">この操作は取り消せません。削除前にAdminのパスワードをもう一度入力してください。</p>
-  <form id="delete-form" method="post">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label for="confirm-password">Adminパスワード</label>
-    <input id="confirm-password" name="confirm_password" type="password" required autocomplete="current-password"
-           style="display:block;width:100%;box-sizing:border-box;padding:10px;margin:9px 0 18px">
-    <div style="display:flex;justify-content:flex-end;gap:10px">
-      <button type="button" onclick="document.getElementById('delete-dialog').close()">キャンセル</button>
-      <button type="submit" style="background:#dc3545;color:white;border:0;border-radius:4px;padding:9px 16px">削除を確定</button>
-    </div>
-  </form>
-</dialog>
-<script>
-function openDeleteDialog(id, username) {
-  const dialog = document.getElementById('delete-dialog');
-  document.getElementById('delete-target').textContent = username + ' (ID: ' + id + ')';
-  document.getElementById('delete-form').action = '/admin/managers/' + id + '/delete';
-  document.getElementById('confirm-password').value = '';
-  dialog.showModal();
-}
-</script>
+<style>
+.delete-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 99999; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
+.delete-overlay:target { display: flex; }
+.delete-panel { background: white; color: #222; border-radius: 10px; padding: 24px; max-width: 450px; width: 100%; box-sizing: border-box; box-shadow: 0 12px 40px #0005; }
+.delete-panel h3 { margin: 0 0 14px; font-size: 20px; }
+.delete-panel .delete-warning { color: #b42318; margin: 12px 0; }
+.delete-panel label { display: block; font-weight: bold; margin: 12px 0 6px; }
+.delete-panel input[type=password] { padding: 10px; width: 100%; box-sizing: border-box; border: 1px solid #adb5bd; border-radius: 5px; }
+.delete-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; align-items: center; }
+.delete-cancel { padding: 9px 14px; border: 1px solid #999; border-radius: 5px; color: #222; text-decoration: none; }
+.delete-submit { padding: 10px 16px; background: #dc3545; color: white; border: none; border-radius: 5px; cursor: pointer; }
+</style>
+{% for m in managers %}
+{% if m.username != 'Admin' %}
+<div class="delete-overlay" id="delete-confirm-{{ m.id }}" role="dialog" aria-modal="true" aria-labelledby="delete-title-{{ m.id }}">
+  <div class="delete-panel">
+    <h3 id="delete-title-{{ m.id }}">管理者アカウントの削除確認</h3>
+    <p>削除対象：<strong>{{ m.username }}</strong> (ID: {{ m.id }})</p>
+    <p class="delete-warning">この操作は取り消せません。Adminのパスワードを再入力してください。</p>
+    <form action="{{ url_for('manager_delete', manager_id=m.id) }}" method="post">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label for="admin-password-{{ m.id }}">Adminパスワード</label>
+      <input id="admin-password-{{ m.id }}" type="password" name="confirm_password" required autocomplete="current-password">
+      <div class="delete-actions">
+        <a class="delete-cancel" href="#manager-list">キャンセル</a>
+        <button class="delete-submit" type="submit">削除する</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
 {% endif %}
 </body>
 </html>
