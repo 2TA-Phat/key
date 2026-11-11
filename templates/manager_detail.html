@@ -301,6 +301,9 @@
                     </td>
                 </tr>
 
+                {% for label, field in [('学籍番号','student_id'),('学科','department'),('コース','course'),('クラス','school_class'),('出席番号','number'),('電話番号','phone')] %}
+                <tr><th>{{ label }}</th><td>{{ manager[field] if manager[field] is not none and manager[field] != '' else '未登録' }}</td></tr>
+                {% endfor %}
             </table>
 
 

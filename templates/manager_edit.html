@@ -252,6 +252,9 @@
                 </div>
 
 
+                {% for label, field in [('学籍番号','student_id'),('学科','department'),('コース','course'),('クラス','school_class'),('出席番号','number')] %}
+                <div class="form-group"><label>{{ label }}</label><input type="text" name="{{ field }}" value="{{ manager[field] or '' }}"></div>
+                {% endfor %}
                 <div class="form-group">
 
                     <label>役割名</label>

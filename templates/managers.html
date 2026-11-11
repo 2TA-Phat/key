@@ -70,6 +70,14 @@
         color: white;
         border-radius: 4px;
     }
+ .transfer-bar { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin: 10px 0 16px; }
+ .transfer-btn { padding:8px 12px; border-radius:5px; border:0; background:#1678c2; color:white; text-decoration:none; cursor:pointer; font-size:13px; }
+ .transfer-btn.secondary { background:#455a64; }
+ .transfer-note { font-size:12px; color:#555; margin: 4px 0 12px; }
+ .transfer-alert { padding:10px; margin:10px 0; background:#e7f4e9; border-radius:4px; }
+ .transfer-alert.error { background:#ffe5e5; color:#a11; }
+ .manager-table-wrap { overflow-x:auto; max-width:100%; }
+ .manager-table-wrap th, .manager-table-wrap td { white-space:nowrap; }
 </style>
 <script src="{{ url_for('static', filename='js/tab_session.js') }}"></script></head>
 
@@ -179,7 +187,19 @@
         </div>
 
 
-        <div class="card">
+        {% if message %}<div class="transfer-alert">{{ message }}</div>{% endif %}
+        {% if error %}<div class="transfer-alert error">{{ error }}</div>{% endif %}
+        <div class="transfer-bar">
+          <form action="{{ url_for('managers_import') }}" method="post" enctype="multipart/form-data" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="file" name="file" accept=".xlsx,.csv" required aria-label="Import file">
+            <button class="transfer-btn" type="submit">Import（取込）</button>
+          </form>
+          <a class="transfer-btn secondary" href="{{ url_for('managers_export', format='xlsx') }}">Export Excel</a>
+          <a class="transfer-btn secondary" href="{{ url_for('managers_export', format='csv') }}">Export CSV</a>
+        </div>
+        <div class="transfer-note">既存のStudentはユーザー名で更新します。新規Studentは無効状態で追加され、本人確認とパスワード設定が必要です。管理者の権限とパスワードは変更されません。</div>
+        <div class="card"><div class="manager-table-wrap">
 
             <table style="
                 width:100%;
@@ -219,9 +239,10 @@
                             メールアドレス
                         </th>
 
-                        <th style="padding:10px;">
-                            役割名
-                        </th>
+                        {% for header in ['学籍番号','学科','コース','クラス','出席番号'] %}
+                        <th style="padding:10px;">{{ header }}</th>
+                        {% endfor %}
+                        <th style="padding:10px;">役割名</th>
 
                     </tr>
 
@@ -296,9 +317,10 @@
                         </td>
 
 
-                        <td style="padding:10px;">
-                            {{ m.role }}
-                        </td>
+                        {% for field in ['student_id','department','course','school_class','number'] %}
+                        <td style="padding:10px;">{{ m[field] if m[field] is not none and m[field] != '' else '未登録' }}</td>
+                        {% endfor %}
+                        <td style="padding:10px;">{{ m.role }}</td>
 
                     </tr>
 
@@ -308,7 +330,7 @@
                     <tr>
 
                         <td
-                            colspan="7"
+                            colspan="12"
                             style="
                                 padding:25px;
                                 text-align:center;
@@ -324,7 +346,7 @@
 
                 </tbody>
 
-            </table>
+            </table></div>
 
         </div>
 

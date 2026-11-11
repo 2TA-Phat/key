@@ -12,6 +12,12 @@ import hashlib
 import smtplib
 import ssl
 from email.message import EmailMessage
+from flask import Response, send_file
+from io import BytesIO, StringIO
+import csv
+import zipfile
+import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape as xml_escape
 
 from flask import Flask, request, redirect, render_template, session, url_for, g, jsonify
 from rfid_api import rfid_api, initialize, issue_command, ROOMS, ACTIONS, ROOM_DEVICE
@@ -873,6 +879,212 @@ def read_device_status(conn):
         result[device_id] = {'room': room, 'online': online, 'last_seen': seen}
     return result
 
+# --- Manager account CSV/XLSX transfer (no credentials in files) ---
+TRANSFER_FIELDS = ('username', 'name', 'email', 'student_id', 'department',
+                   'course', 'school_class', 'number')
+TRANSFER_HEADERS = ('ユーザー名', '氏名', 'メールアドレス', '学籍番号', '学科',
+                    'コース', 'クラス', '出席番号')
+TRANSFER_ALIASES = dict(zip(TRANSFER_FIELDS, TRANSFER_FIELDS))
+TRANSFER_ALIASES.update(dict(zip(TRANSFER_HEADERS, TRANSFER_FIELDS)))
+MAX_IMPORT_BYTES = 2 * 1024 * 1024
+MAX_IMPORT_ROWS = 2000
+
+
+def _xlsx_column(index):
+    result = ''
+    while index:
+        index, rem = divmod(index - 1, 26)
+        result = chr(65 + rem) + result
+    return result
+
+
+def _make_xlsx(rows):
+    # Minimal standards-compliant XLSX with inline strings; keep student IDs as text.
+    sheet_rows = []
+    for rn, row in enumerate(rows, 1):
+        cells = []
+        for cn, value in enumerate(row, 1):
+            value = str(value if value is not None else '')
+            if value.startswith(('=', '+', '-', '@')):  # spreadsheet formula safety
+                value = "'" + value
+            reference = f'{_xlsx_column(cn)}{rn}'
+            cells.append(f'<c r="{reference}" t="inlineStr"><is><t xml:space="preserve">{xml_escape(value)}</t></is></c>')
+        sheet_rows.append(f'<row r="{rn}">{"".join(cells)}</row>')
+    ws = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+          '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+          '<sheetData>' + ''.join(sheet_rows) + '</sheetData></worksheet>')
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>')
+        z.writestr('_rels/.rels', '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+        z.writestr('xl/workbook.xml', '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Managers" sheetId="1" r:id="rId1"/></sheets></workbook>')
+        z.writestr('xl/_rels/workbook.xml.rels', '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>')
+        z.writestr('xl/worksheets/sheet1.xml', ws)
+    buffer.seek(0)
+    return buffer
+
+
+def _parse_xlsx(data):
+    ns = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+    with zipfile.ZipFile(BytesIO(data)) as book:
+        if sum(info.file_size for info in book.infolist()) > 10 * 1024 * 1024:
+            raise ValueError('Excelファイルの展開サイズが大きすぎます。')
+        names = book.namelist()
+        sheet_name = 'xl/worksheets/sheet1.xml'
+        if sheet_name not in names:
+            raise ValueError('最初のワークシートを読み込めません。')
+        strings = []
+        if 'xl/sharedStrings.xml' in names:
+            root = ET.fromstring(book.read('xl/sharedStrings.xml'))
+            strings = [''.join(t.text or '' for t in si.iter(ns+'t')) for si in root.findall(ns+'si')]
+        root = ET.fromstring(book.read(sheet_name))
+        rows = []
+        for row in root.iter(ns+'row'):
+            values = {}
+            for c in row.findall(ns+'c'):
+                col = ''.join(k for k in c.attrib.get('r','') if k.isalpha()).upper()
+                idx = 0
+                for letter in col:
+                    idx = idx * 26 + ord(letter) - 64
+                if not 1 <= idx <= 64:
+                    continue
+                typ = c.attrib.get('t')
+                if c.find(ns+'f') is not None:
+                    raise ValueError('数式セルはインポートできません。')
+                if typ == 'inlineStr':
+                    value = ''.join(x.text or '' for x in c.iter(ns+'t'))
+                else:
+                    v = c.find(ns+'v')
+                    value = v.text if v is not None and v.text is not None else ''
+                    if typ == 's':
+                        value = strings[int(value)]
+                values[idx-1] = value
+            if values:
+                rows.append([values.get(i, '') for i in range(max(values)+1)])
+            if len(rows) > MAX_IMPORT_ROWS + 1:
+                raise ValueError('最大2000行まで対応しています。')
+        return rows
+
+
+def _parse_transfer(data, filename):
+    if filename.lower().endswith('.csv'):
+        content = data.decode('utf-8-sig')
+        rows = list(csv.reader(StringIO(content)))
+    elif filename.lower().endswith('.xlsx'):
+        rows = _parse_xlsx(data)
+    else:
+        raise ValueError('CSVまたはXLSXファイルを選択してください。')
+    if not rows or len(rows) < 2:
+        raise ValueError('ヘッダーと1行以上のデータが必要です。')
+    if len(rows) - 1 > MAX_IMPORT_ROWS:
+        raise ValueError('最大2000行まで対応しています。')
+    headers = [TRANSFER_ALIASES.get(str(h).strip()) for h in rows[0]]
+    if any(h is None for h in headers) or len(set(headers)) != len(headers):
+        raise ValueError('ヘッダーが不正または重複しています。Exportファイルを使ってください。')
+    if not set(TRANSFER_FIELDS).issubset(headers):
+        raise ValueError('必要な列が不足しています。Exportファイルを使ってください。')
+    records = []
+    names = set()
+    for number, row in enumerate(rows[1:], 2):
+        if not any(str(x).strip() for x in row):
+            continue
+        if len(row) > len(headers) and any(str(x).strip() for x in row[len(headers):]):
+            raise ValueError(f'{number}行目：列数が一致しません。')
+        item = dict(zip(headers, [str(x).strip() for x in row] + [''] * len(headers)))
+        username, name, email = item['username'], item['name'], item['email']
+        if not re.fullmatch(r'[A-Za-z0-9_.-]{2,60}', username):
+            raise ValueError(f'{number}行目：ユーザー名が不正です。')
+        if username.lower() in names:
+            raise ValueError(f'{number}行目：ユーザー名が重複しています。')
+        names.add(username.lower())
+        if not name or len(name) > 100:
+            raise ValueError(f'{number}行目：氏名を確認してください。')
+        if email and (len(email) > 254 or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email)):
+            raise ValueError(f'{number}行目：メールアドレスが不正です。')
+        if item['student_id'] and not re.fullmatch(r'[0-9A-Za-z-]{1,30}', item['student_id']):
+            raise ValueError(f'{number}行目：学籍番号が不正です。')
+        if item['number'] and (not item['number'].isdigit() or not 1 <= int(item['number']) <= 999):
+            raise ValueError(f'{number}行目：出席番号が不正です。')
+        for field in ('department','course','school_class'):
+            if len(item[field]) > 100:
+                raise ValueError(f'{number}行目：入力が長すぎます。')
+        records.append(item)
+    if not records:
+        raise ValueError('インポートするデータがありません。')
+    return records
+
+
+@app.route('/admin/managers/export')
+def managers_export():
+    with sqlite3.connect(app.config['DATABASE']) as conn:
+        conn.row_factory = sqlite3.Row
+        records = conn.execute('SELECT '+','.join(TRANSFER_FIELDS)+' FROM managers ORDER BY id').fetchall()
+    rows = [TRANSFER_HEADERS] + [[r[field] if r[field] is not None else '' for field in TRANSFER_FIELDS] for r in records]
+    fmt = request.args.get('format', 'xlsx').lower()
+    if fmt == 'csv':
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerows([["'" + str(x) if str(x).startswith(('=', '+', '-', '@')) else x for x in row] for row in rows])
+        return Response('\ufeff'+output.getvalue(), mimetype='text/csv; charset=utf-8',
+                        headers={'Content-Disposition':'attachment; filename="managers.csv"', 'Cache-Control':'no-store'})
+    if fmt != 'xlsx':
+        return '形式が不正です。', 400
+    return send_file(_make_xlsx(rows), as_attachment=True, download_name='managers.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route('/admin/managers/import', methods=['POST'])
+def managers_import():
+    from rfid_api import valid_csrf
+    if not valid_csrf():
+        return '認証エラー (CSRF)', 403
+    upload = request.files.get('file')
+    if not upload or not upload.filename:
+        return redirect(url_for('admin_managers', error='ファイルを選択してください。'))
+    data = upload.read(MAX_IMPORT_BYTES+1)
+    if len(data) > MAX_IMPORT_BYTES:
+        return redirect(url_for('admin_managers', error='ファイルは2MB以内にしてください。'))
+    try:
+        records = _parse_transfer(data, upload.filename)
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute('BEGIN IMMEDIATE')
+            existing = {r['username']: dict(r) for r in conn.execute('SELECT id,username,role FROM managers')}
+            claimed_ids = {}
+            for r in conn.execute('SELECT id,student_id FROM managers WHERE student_id IS NOT NULL AND student_id != ""'):
+                claimed_ids.setdefault(r['student_id'], r['id'])
+            created = updated = 0
+            for item in records:
+                username = item['username']
+                actor = existing.get(username)
+                # Existing Admin and other privileged accounts are never modified by upload.
+                if actor and actor['role'] != 'Student':
+                    raise ValueError(f'{username}：管理者アカウントはインポートで変更できません。')
+                student_id = item['student_id'] or None
+                if student_id and student_id in claimed_ids and (not actor or claimed_ids[student_id] != actor['id']):
+                    raise ValueError(f'{student_id}：学籍番号が別のアカウントで使用されています。')
+                params = (item['name'], item['email'] or None, student_id, item['department'] or None,
+                          item['course'] or None, item['school_class'] or None,
+                          int(item['number']) if item['number'] else None)
+                if actor:
+                    conn.execute('UPDATE managers SET name=?,email=?,student_id=?,department=?,course=?,school_class=?,number=? WHERE id=?',params+(actor['id'],))
+                    updated += 1
+                else:
+                    # Random unknown password and disabled status: admin must verify identity and activate.
+                    cur = conn.execute("""INSERT INTO managers(username,password,name,email,student_id,department,course,school_class,number,role,status)
+                                     VALUES(?,?,?,?,?,?,?,?,?,'Student','無効')""",
+                                       (username,generate_password_hash(secrets.token_urlsafe(32)))+params)
+                    existing[username] = {'id':cur.lastrowid,'username':username,'role':'Student'}
+                    created += 1
+                if student_id:
+                    claimed_ids[student_id] = existing[username]['id']
+            conn.commit()
+        return redirect(url_for('admin_managers', message=f'インポート完了：新規{created}件、更新{updated}件。新規アカウントは無効です。'))
+    except (ValueError, UnicodeError, zipfile.BadZipFile, ET.ParseError, IndexError, sqlite3.IntegrityError) as exc:
+        return redirect(url_for('admin_managers', error=str(exc)[:250]))
+
+
 # --- 管理者一覧画面 (MỚI BỔ SUNG) ---
 @app.route("/admin/managers")
 def admin_managers():
@@ -894,7 +1106,8 @@ def admin_managers():
     can_delete = bool(current and current['username'] == 'Admin' and
                       current['role'] == 'Administrator' and current['status'] == '有効')
     return render_template("managers.html", managers=managers,
-                           can_delete=can_delete, csrf=session.get("csrf") or init_csrf())
+                           can_delete=can_delete, csrf=session.get("csrf") or init_csrf(),
+                           message=request.args.get("message"), error=request.args.get("error"))
 # --- 管理者追加 ---
 @app.route("/admin/managers/add", methods=["GET", "POST"])
 def manager_add():
@@ -961,7 +1174,7 @@ def manager_detail(manager_id):
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT id, username, name, email, role, status
+        SELECT id, username, name, email, role, status, student_id, department, course, school_class, number, phone
         FROM managers
         WHERE id = ?
     """, (manager_id,))
@@ -1013,6 +1226,18 @@ def manager_edit(manager_id):
     role = request.form.get("role", "Operator")
     status = request.form.get("status", "有効")
 
+    student_id = request.form.get('student_id','').strip() or None
+    department = request.form.get('department','').strip()
+    course = request.form.get('course','').strip()
+    school_class = request.form.get('school_class','').strip()
+    number_raw = request.form.get('number','').strip()
+    if number_raw and (not number_raw.isdigit() or not 1 <= int(number_raw) <= 999):
+        conn.close()
+        return '出席番号が不正です。', 400
+    if student_id and not re.fullmatch(r'[0-9A-Za-z-]{1,30}', student_id):
+        conn.close()
+        return '学籍番号が不正です。', 400
+    extras = (student_id, department, course, school_class, int(number_raw) if number_raw else None)
     if password:
         password_hash = generate_password_hash(password)
 
@@ -1023,7 +1248,7 @@ def manager_edit(manager_id):
                 name=?,
                 email=?,
                 role=?,
-                status=?
+                status=?, student_id=?, department=?, course=?, school_class=?, number=?
             WHERE id=?
         """, (
             username,
@@ -1032,7 +1257,7 @@ def manager_edit(manager_id):
             email,
             role,
             status,
-            manager_id
+            *extras, manager_id
         ))
 
     else:
@@ -1042,7 +1267,7 @@ def manager_edit(manager_id):
                 name=?,
                 email=?,
                 role=?,
-                status=?
+                status=?, student_id=?, department=?, course=?, school_class=?, number=?
             WHERE id=?
         """, (
             username,
@@ -1050,7 +1275,7 @@ def manager_edit(manager_id):
             email,
             role,
             status,
-            manager_id
+            *extras, manager_id
         ))
 
     conn.commit()
