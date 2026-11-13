@@ -198,7 +198,7 @@
           <a class="transfer-btn secondary" href="{{ url_for('managers_export', format='xlsx') }}">Export Excel</a>
           <a class="transfer-btn secondary" href="{{ url_for('managers_export', format='csv') }}">Export CSV</a>
         </div>
-        <div class="transfer-note">既存のStudentはユーザー名で更新します。新規Studentは無効状態で追加され、本人確認とパスワード設定が必要です。管理者の権限とパスワードは変更されません。</div>
+        <div class="transfer-note">既存のStudentはIDまたはメールアドレスで更新します。新規Studentは無効状態で追加され、本人確認とパスワード設定が必要です。ID・役割・状態は確認用です。新しいパスワードは空欄で出力され、Importで変更できません。管理者の権限とパスワードは変更されません。</div>
         <div class="card"><div class="manager-table-wrap">
 
             <table style="
@@ -221,10 +221,6 @@
 
                         <th style="padding:10px;">
                             ID
-                        </th>
-
-                        <th style="padding:10px;">
-                            ユーザー名
                         </th>
 
                         <th style="padding:10px;">
@@ -272,7 +268,7 @@
                             </a>
 
                             {% if can_delete and m.username != 'Admin' %}
-                            <a class="btn-delete" href="#delete-confirm-{{ m.id }}" aria-label="{{ m.username }} を削除">削除</a>
+                            <a class="btn-delete" href="#delete-confirm-{{ m.id }}" aria-label="{{ m.name }} を削除">削除</a>
                             {% endif %}
 
                         </td>
@@ -282,10 +278,6 @@
                             {{ m.id }}
                         </td>
 
-
-                        <td style="padding:10px;">
-                            {{ m.username }}
-                        </td>
 
 
                         <td style="padding:10px;">
@@ -375,7 +367,7 @@
 <div class="delete-overlay" id="delete-confirm-{{ m.id }}" role="dialog" aria-modal="true" aria-labelledby="delete-title-{{ m.id }}">
   <div class="delete-panel">
     <h3 id="delete-title-{{ m.id }}">管理者アカウントの削除確認</h3>
-    <p>削除対象：<strong>{{ m.username }}</strong> (ID: {{ m.id }})</p>
+    <p>削除対象：<strong>{{ m.name }}</strong> (ID: {{ m.id }})</p>
     <p class="delete-warning">この操作は取り消せません。Adminのパスワードを再入力してください。</p>
     <form action="{{ url_for('manager_delete', manager_id=m.id) }}" method="post">
       <input type="hidden" name="csrf" value="{{ csrf }}">

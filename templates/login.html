@@ -76,8 +76,8 @@
         <div class="error">{{ error }}</div>
     {% endif %}
     <form action="/login" method="post">
-        <label>ユーザー名</label>
-        <input type="text" name="username" required>
+        <label>メールアドレス</label>
+        <input type="email" name="email" autocomplete="username" required>
         <label>パスワード</label>
         <input type="password" name="password" required>
         <button type="submit">ログイン</button>

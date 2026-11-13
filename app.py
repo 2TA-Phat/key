@@ -152,6 +152,14 @@ def init_db():
     )""")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_login_history_student ON login_history(student_id, login_at)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_login_history_manager ON login_history(manager_id, login_at)")
+    # Email addresses are the unique login identifier (case insensitive).
+    duplicates = cur.execute("""SELECT lower(trim(email)), COUNT(*) FROM managers
+        WHERE email IS NOT NULL AND trim(email) != ''
+        GROUP BY lower(trim(email)) HAVING COUNT(*) > 1""").fetchall()
+    if duplicates:
+        raise RuntimeError('重複したメールアドレスがあります。管理者が修正してから起動してください。')
+    cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_managers_email_login
+        ON managers(lower(trim(email))) WHERE email IS NOT NULL AND trim(email) != ''""")
     conn.commit()
     conn.close()
 
@@ -357,13 +365,13 @@ def login():
     if request.method == 'POST':
         if not getattr(session, 'tab_id', None):
             return render_template('login.html', error='タブの識別情報がありません。ページを再読み込みしてください。'), 400
-        username = request.form.get('username', '').strip()
+        email = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
         with sqlite3.connect(app.config['DATABASE']) as conn:
             conn.row_factory = sqlite3.Row
-            manager = conn.execute("SELECT * FROM managers WHERE username=?", (username,)).fetchone()
+            manager = conn.execute("SELECT * FROM managers WHERE lower(trim(email))=?", (email,)).fetchone()
             if not (manager and manager['password'] and check_password_hash(manager['password'], password)):
-                return render_template('login.html', error='ユーザー名またはパスワードが違います。'), 401
+                return render_template('login.html', error='メールアドレスまたはパスワードが違います。'), 401
             if manager['status'] == '承認待ち':
                 return render_template('login.html', error='先生の承認待ちです。承認後にログインできます。'), 403
             if manager['status'] != '有効':
@@ -654,7 +662,7 @@ def register():
     if not session.get('register_csrf') or not hmac.compare_digest(request.form.get('csrf', ''), session['register_csrf']):
         return '認証エラー', 403
     student_id = request.form.get('student_id', '').strip()
-    username = request.form.get('username', '').strip()
+    username = 'student_' + secrets.token_hex(12)
     name = request.form.get('name', '').strip()
     department = request.form.get('department', '').strip()
     school_class = request.form.get('school_class', '').strip()
@@ -664,13 +672,11 @@ def register():
     email = request.form.get('email', '').strip().lower()
     password = request.form.get('password', '')
     def invalid(message):
-        values = {k: request.form.get(k, '') for k in ('student_id','username','name','department','school_class','course','number','phone','email')}
+        values = {k: request.form.get(k, '') for k in ('student_id','name','department','school_class','course','number','phone','email')}
         return render_template('register.html', error=message, csrf=session['register_csrf'],
                                departments=DEPARTMENTS, classes=SCHOOL_CLASSES, values=values), 400
     if not re.fullmatch(r'[0-9A-Za-z-]{3,30}', student_id):
         return invalid('学籍番号を正しく入力してください。')
-    if not (3 <= len(username) <= 64) or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in username):
-        return invalid('ユーザー名は空白を含まない3～64文字で入力してください。')
     if not (1 <= len(name) <= 100):
         return invalid('名前を入力してください。')
     if department not in DEPARTMENTS or school_class not in SCHOOL_CLASSES:
@@ -689,10 +695,10 @@ def register():
     with sqlite3.connect(app.config['DATABASE'], timeout=15) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute('BEGIN IMMEDIATE')
-        claimed = conn.execute('SELECT 1 FROM managers WHERE student_id=? OR username=? OR lower(email)=?',
-                               (student_id, username, email)).fetchone()
+        claimed = conn.execute('SELECT 1 FROM managers WHERE student_id=? OR lower(trim(email))=?',
+                               (student_id, email)).fetchone()
         if claimed:
-            return invalid('学籍番号、ユーザー名、またはメールアドレスは既に登録されています。')
+            return invalid('学籍番号またはメールアドレスは既に登録されています。')
         try:
             conn.execute("""INSERT INTO managers
                 (username,password,name,email,phone,department,school_class,course,number,role,status,student_id)
@@ -738,7 +744,7 @@ def student_approvals():
             return redirect(url_for('student_approvals'))
     with sqlite3.connect(app.config['DATABASE']) as conn:
         conn.row_factory = sqlite3.Row
-        pending = conn.execute("""SELECT id,student_id,username,name,department,school_class,phone,email
+        pending = conn.execute("""SELECT id,student_id,name,department,school_class,phone,email
             FROM managers WHERE role='Student' AND status='承認待ち' ORDER BY id""").fetchall()
     return render_template('student_approvals.html', pending=pending, csrf=session['csrf'], error=error)
 
@@ -880,10 +886,14 @@ def read_device_status(conn):
     return result
 
 # --- Manager account CSV/XLSX transfer (no credentials in files) ---
-TRANSFER_FIELDS = ('username', 'name', 'email', 'student_id', 'department',
-                   'course', 'school_class', 'number')
-TRANSFER_HEADERS = ('ユーザー名', '氏名', 'メールアドレス', '学籍番号', '学科',
-                    'コース', 'クラス', '出席番号')
+# Column order matches 管理者編集. Passwords are NEVER exported.
+TRANSFER_FIELDS = ('id', 'password', 'name', 'email', 'student_id',
+                   'department', 'course', 'school_class', 'number', 'role', 'status')
+TRANSFER_HEADERS = ('ID', '新しいパスワード', '氏名', 'メールアドレス', '学籍番号',
+                    '学科', 'コース', 'クラス', '出席番号', '役割名', '状態')
+# Older eight-column exports remain importable.
+TRANSFER_REQUIRED = ('name', 'email', 'student_id', 'department',
+                     'course', 'school_class', 'number')
 TRANSFER_ALIASES = dict(zip(TRANSFER_FIELDS, TRANSFER_FIELDS))
 TRANSFER_ALIASES.update(dict(zip(TRANSFER_HEADERS, TRANSFER_FIELDS)))
 MAX_IMPORT_BYTES = 2 * 1024 * 1024
@@ -982,26 +992,36 @@ def _parse_transfer(data, filename):
     headers = [TRANSFER_ALIASES.get(str(h).strip()) for h in rows[0]]
     if any(h is None for h in headers) or len(set(headers)) != len(headers):
         raise ValueError('ヘッダーが不正または重複しています。Exportファイルを使ってください。')
-    if not set(TRANSFER_FIELDS).issubset(headers):
+    if not set(TRANSFER_REQUIRED).issubset(headers):
         raise ValueError('必要な列が不足しています。Exportファイルを使ってください。')
     records = []
-    names = set()
+    emails = set()
     for number, row in enumerate(rows[1:], 2):
         if not any(str(x).strip() for x in row):
             continue
         if len(row) > len(headers) and any(str(x).strip() for x in row[len(headers):]):
             raise ValueError(f'{number}行目：列数が一致しません。')
         item = dict(zip(headers, [str(x).strip() for x in row] + [''] * len(headers)))
-        username, name, email = item['username'], item['name'], item['email']
-        if not re.fullmatch(r'[A-Za-z0-9_.-]{2,60}', username):
-            raise ValueError(f'{number}行目：ユーザー名が不正です。')
-        if username.lower() in names:
-            raise ValueError(f'{number}行目：ユーザー名が重複しています。')
-        names.add(username.lower())
+        for optional in ('id', 'password', 'role', 'status'):
+            item.setdefault(optional, '')
+        name, email = item['name'], item['email'].strip().lower()
+        item['email'] = email
+        if item['id'] and (not item['id'].isdigit() or int(item['id']) < 1):
+            raise ValueError(f'{number}行目：IDが不正です。')
+        # Password changes must be performed through the authenticated Edit screen.
+        if item['password']:
+            raise ValueError(f'{number}行目：新しいパスワード列は空欄にしてください。')
+        if item['role'] and item['role'] not in ('Student', 'Administrator', 'Operator'):
+            raise ValueError(f'{number}行目：役割名が不正です。')
+        if item['status'] and item['status'] not in ('有効', '無効', '承認待ち', '却下'):
+            raise ValueError(f'{number}行目：状態が不正です。')
         if not name or len(name) > 100:
             raise ValueError(f'{number}行目：氏名を確認してください。')
-        if email and (len(email) > 254 or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email)):
+        if not email or len(email) > 254 or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email):
             raise ValueError(f'{number}行目：メールアドレスが不正です。')
+        if email in emails:
+            raise ValueError(f'{number}行目：メールアドレスが重複しています。')
+        emails.add(email)
         if item['student_id'] and not re.fullmatch(r'[0-9A-Za-z-]{1,30}', item['student_id']):
             raise ValueError(f'{number}行目：学籍番号が不正です。')
         if item['number'] and (not item['number'].isdigit() or not 1 <= int(item['number']) <= 999):
@@ -1019,8 +1039,8 @@ def _parse_transfer(data, filename):
 def managers_export():
     with sqlite3.connect(app.config['DATABASE']) as conn:
         conn.row_factory = sqlite3.Row
-        records = conn.execute('SELECT '+','.join(TRANSFER_FIELDS)+' FROM managers ORDER BY id').fetchall()
-    rows = [TRANSFER_HEADERS] + [[r[field] if r[field] is not None else '' for field in TRANSFER_FIELDS] for r in records]
+        records = conn.execute('SELECT id,name,email,student_id,department,course,school_class,number,role,status FROM managers ORDER BY id').fetchall()
+    rows = [TRANSFER_HEADERS] + [[('' if field == 'password' else (r[field] if r[field] is not None else '')) for field in TRANSFER_FIELDS] for r in records]
     fmt = request.args.get('format', 'xlsx').lower()
     if fmt == 'csv':
         output = StringIO()
@@ -1050,35 +1070,55 @@ def managers_import():
         with sqlite3.connect(app.config['DATABASE']) as conn:
             conn.row_factory = sqlite3.Row
             conn.execute('BEGIN IMMEDIATE')
-            existing = {r['username']: dict(r) for r in conn.execute('SELECT id,username,role FROM managers')}
-            claimed_ids = {}
-            for r in conn.execute('SELECT id,student_id FROM managers WHERE student_id IS NOT NULL AND student_id != ""'):
-                claimed_ids.setdefault(r['student_id'], r['id'])
+            accounts = [dict(r) for r in conn.execute('SELECT id,username,name,email,student_id,department,course,school_class,number,role,status FROM managers')]
+            existing_by_id = {r['id']: r for r in accounts}
+            existing_by_email = {r['email'].strip().lower(): r for r in accounts if r['email'] and r['email'].strip()}
+            claimed_ids = {r['student_id']: r['id'] for r in accounts if r['student_id']}
             created = updated = 0
             for item in records:
-                username = item['username']
-                actor = existing.get(username)
-                # Existing Admin and other privileged accounts are never modified by upload.
+                email = item['email']
+                actor = existing_by_id.get(int(item['id'])) if item['id'] else existing_by_email.get(email)
+                if item['id'] and not actor:
+                    raise ValueError(f'{email}：指定されたIDが見つかりません。')
+                owner = existing_by_email.get(email)
+                if owner and (not actor or owner['id'] != actor['id']):
+                    raise ValueError(f'{email}：メールアドレスは別のアカウントで使用されています。')
+                if not actor and item['role'] not in ('', 'Student'):
+                    raise ValueError(f'{email}：新規登録できる役割はStudentのみです。')
                 if actor and actor['role'] != 'Student':
-                    raise ValueError(f'{username}：管理者アカウントはインポートで変更できません。')
+                    immutable = ('name', 'email', 'student_id', 'department', 'course', 'school_class', 'number')
+                    if any(str(actor[k] if actor[k] is not None else '') != item[k] for k in immutable) or (item['role'] and item['role'] != actor['role']) or (item['status'] and item['status'] != actor['status']):
+                        raise ValueError(f'{email}：管理者アカウントはインポートで変更できません。')
+                    continue
+                if actor and item['role'] and item['role'] != actor['role']:
+                    raise ValueError(f'{email}：役割はImportで変更できません。')
+                if actor and item['status'] and item['status'] != actor['status']:
+                    raise ValueError(f'{email}：状態はImportで変更できません。')
                 student_id = item['student_id'] or None
                 if student_id and student_id in claimed_ids and (not actor or claimed_ids[student_id] != actor['id']):
                     raise ValueError(f'{student_id}：学籍番号が別のアカウントで使用されています。')
-                params = (item['name'], item['email'] or None, student_id, item['department'] or None,
+                params = (item['name'], email, student_id, item['department'] or None,
                           item['course'] or None, item['school_class'] or None,
                           int(item['number']) if item['number'] else None)
                 if actor:
+                    old_email = (actor['email'] or '').strip().lower()
                     conn.execute('UPDATE managers SET name=?,email=?,student_id=?,department=?,course=?,school_class=?,number=? WHERE id=?',params+(actor['id'],))
+                    if old_email != email:
+                        existing_by_email.pop(old_email, None)
+                        existing_by_email[email] = actor
                     updated += 1
                 else:
-                    # Random unknown password and disabled status: admin must verify identity and activate.
+                    # Legacy username is an opaque internal ID, not a login credential.
+                    internal_username = 'import_' + secrets.token_hex(12)
                     cur = conn.execute("""INSERT INTO managers(username,password,name,email,student_id,department,course,school_class,number,role,status)
                                      VALUES(?,?,?,?,?,?,?,?,?,'Student','無効')""",
-                                       (username,generate_password_hash(secrets.token_urlsafe(32)))+params)
-                    existing[username] = {'id':cur.lastrowid,'username':username,'role':'Student'}
+                                       (internal_username,generate_password_hash(secrets.token_urlsafe(32)))+params)
+                    actor = {'id':cur.lastrowid, 'username':internal_username, 'role':'Student', 'email':email}
+                    existing_by_id[actor['id']] = actor
+                    existing_by_email[email] = actor
                     created += 1
                 if student_id:
-                    claimed_ids[student_id] = existing[username]['id']
+                    claimed_ids[student_id] = actor['id']
             conn.commit()
         return redirect(url_for('admin_managers', message=f'インポート完了：新規{created}件、更新{updated}件。新規アカウントは無効です。'))
     except (ValueError, UnicodeError, zipfile.BadZipFile, ET.ParseError, IndexError, sqlite3.IntegrityError) as exc:
@@ -1117,14 +1157,14 @@ def manager_add():
     if request.method == "GET":
         return render_template("manager_add.html")
 
-    username = request.form.get("username", "").strip()
+    username = 'manager_' + secrets.token_hex(12)
     password = request.form.get("password", "")
     name = request.form.get("name", "").strip()
-    email = request.form.get("email", "").strip()
+    email = request.form.get("email", "").strip().lower()
     role = request.form.get("role", "Operator")
     status = request.form.get("status", "有効")
 
-    if not username or not password or not name:
+    if not password or not name or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email):
         return render_template(
             "manager_add.html",
             error="必須項目を入力してください。"
@@ -1156,7 +1196,7 @@ def manager_add():
 
         return render_template(
             "manager_add.html",
-            error="このユーザー名は既に使用されています。"
+            error="メールアドレスは既に使用されています。"
         )
 
     conn.close()
@@ -1203,7 +1243,8 @@ def manager_edit(manager_id):
 
     if request.method == "GET":
         cur.execute("""
-            SELECT id, username, name, email, role, status
+            SELECT id, username, name, email, role, status,
+                   student_id, department, course, school_class, number
             FROM managers
             WHERE id = ?
         """, (manager_id,))
@@ -1216,15 +1257,21 @@ def manager_edit(manager_id):
 
         return render_template(
             "manager_edit.html",
-            manager=manager
+            manager=manager, csrf=session.get('csrf') or init_csrf()
         )
 
-    username = request.form.get("username", "").strip()
+    from rfid_api import valid_csrf
+    if not valid_csrf():
+        conn.close()
+        return '認証エラー (CSRF)', 403
     password = request.form.get("password", "")
     name = request.form.get("name", "").strip()
-    email = request.form.get("email", "").strip()
+    email = request.form.get("email", "").strip().lower()
     role = request.form.get("role", "Operator")
     status = request.form.get("status", "有効")
+    if not name or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email) or role not in ('Administrator','Operator','Student') or status not in ('有効','無効'):
+        conn.close()
+        return '入力内容が不正です。', 400
 
     student_id = request.form.get('student_id','').strip() or None
     department = request.form.get('department','').strip()
@@ -1243,15 +1290,13 @@ def manager_edit(manager_id):
 
         cur.execute("""
             UPDATE managers
-            SET username=?,
-                password=?,
+            SET password=?,
                 name=?,
                 email=?,
                 role=?,
                 status=?, student_id=?, department=?, course=?, school_class=?, number=?
             WHERE id=?
         """, (
-            username,
             password_hash,
             name,
             email,
@@ -1263,14 +1308,12 @@ def manager_edit(manager_id):
     else:
         cur.execute("""
             UPDATE managers
-            SET username=?,
-                name=?,
+            SET name=?,
                 email=?,
                 role=?,
                 status=?, student_id=?, department=?, course=?, school_class=?, number=?
             WHERE id=?
         """, (
-            username,
             name,
             email,
             role,
@@ -1278,7 +1321,12 @@ def manager_edit(manager_id):
             *extras, manager_id
         ))
 
-    conn.commit()
+    try:
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        conn.close()
+        return 'メールアドレスは既に使用されています。', 409
     conn.close()
 
     return redirect("/admin/managers")
