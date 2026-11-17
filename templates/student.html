@@ -22,7 +22,7 @@
 <div class="field"><label>操作 <span class="req">必須</span></label><div class="choices">{% for action in actions %}<label><input type="radio" name="action" value="{{ action }}" {% if loop.first %}checked{% endif %} required><span>{{ '🔓 ' if action == '開ける' else '🔒 ' }}{{ action }}</span></label>{% endfor %}</div></div>
 <div class="field full"><label for="reason">申請理由 <span class="req">必須</span></label><select name="reason_choice" id="reason" required><option value="" selected disabled>申請理由を選択してください</option></select></div>
 <div class="field full" id="otherBox" hidden><label for="otherReason">その他の理由</label><textarea name="reason_detail" id="otherReason" maxlength="200" placeholder="理由を入力してください"></textarea></div>
-<div class="field full"><button class="submit" type="submit">➤ 申請する</button></div></div></form>
+<div class="field full"><button class="submit" type="submit" {% if not rooms %}disabled{% endif %}>➤ 申請する</button>{% if not rooms %}<p class="muted">現在のコースに対応する利用可能な教室がありません。管理者にお問い合わせください。</p>{% endif %}</div></div></form>
 <p class="muted">{% if not authenticated %}ログインせずに申請した場合、本人確認は行われず、教員による承認後に処理されます。 <a href="{{ url_for('register') }}">生徒新規登録</a>{% else %}申請結果は装置からの応答によって確認してください。{% endif %}</p></section></div>
 <aside class="side"><section class="panel"><h3>▦ 日付・時刻</h3><div class="day" id="dateDisplay">--</div><div class="clock" id="clockDisplay">--:--:--</div><div class="muted">日本標準時 (JST)</div></section><section class="panel"><h3>ⓘ システム情報</h3><div class="note-row">● 接続状態は定期的に更新</div><div class="note-row">● 申請は履歴に記録されます</div><div class="note-row">● 登録済み情報は自動表示</div></section></aside>
 </div></main>

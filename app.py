@@ -160,6 +160,31 @@ def init_db():
         raise RuntimeError('重複したメールアドレスがあります。管理者が修正してから起動してください。')
     cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_managers_email_login
         ON managers(lower(trim(email))) WHERE email IS NOT NULL AND trim(email) != ''""")
+    # Course/class catalog. Seed only on first install from active student profiles.
+    cur.execute("""CREATE TABLE IF NOT EXISTS course_catalog (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1))
+    )""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS course_classes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id INTEGER NOT NULL REFERENCES course_catalog(id),
+        class_name TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+        UNIQUE(course_id, class_name)
+    )""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS course_catalog_meta (
+        key TEXT PRIMARY KEY, value TEXT NOT NULL
+    )""")
+    if not cur.execute("SELECT 1 FROM course_catalog_meta WHERE key='seeded'").fetchone():
+        pairs = cur.execute("""SELECT DISTINCT TRIM(course), TRIM(school_class)
+            FROM managers WHERE role='Student' AND status='有効'
+            AND COALESCE(TRIM(course),'')<>'' AND COALESCE(TRIM(school_class),'')<>''""").fetchall()
+        for course_name, class_name in pairs:
+            cur.execute("INSERT OR IGNORE INTO course_catalog(name) VALUES(?)", (course_name,))
+            cid = cur.execute("SELECT id FROM course_catalog WHERE name=?", (course_name,)).fetchone()[0]
+            cur.execute("INSERT OR IGNORE INTO course_classes(course_id,class_name) VALUES(?,?)", (cid,class_name))
+        cur.execute("INSERT INTO course_catalog_meta(key,value) VALUES('seeded','1')")
     conn.commit()
     conn.close()
 
@@ -457,6 +482,33 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
+# Classroom visibility comes from the admin-maintained catalog.
+# Only configured physical rooms can be requested.
+def rooms_for_course(con, course):
+    # The catalog, NOT other student accounts, defines authorization.
+    # A classroom must also exist in the deployed device configuration.
+    course = (course or '').strip()
+    if not course:
+        return ()
+    rows = con.execute("""SELECT cc.class_name FROM course_classes cc
+        JOIN course_catalog c ON c.id=cc.course_id
+        WHERE c.name=? AND c.active=1 AND cc.active=1""", (course,)).fetchall()
+    matches = {r[0] for r in rows}
+    return tuple(room for room in ROOMS if room in matches)
+
+
+def visible_rooms_for_session(con):
+    # Preserve the existing unrestricted Admin/guest views.
+    if not (session.get('logged_in') and session.get('otp_verified')):
+        return ROOMS
+    if session.get('role') != 'Student':
+        return ROOMS
+    account = con.execute("""SELECT course FROM managers
+        WHERE id = ? AND role = 'Student' AND status = '有効'""",
+        (session.get('manager_id'),)).fetchone()
+    return rooms_for_course(con, account[0]) if account else ()
+
+
 # --- 生徒画面 ---
 @app.route('/')
 def index():
@@ -485,13 +537,15 @@ def student_submit(guest_mode=False):
                 FROM managers WHERE id=? AND status='有効'""", (session.get('manager_id'),)).fetchone()
             if user:
                 profile = dict(user)
+    with sqlite3.connect(app.config['DATABASE']) as rooms_con:
+        allowed_rooms = visible_rooms_for_session(rooms_con) if not guest_mode else ROOMS
     open_reasons = ('授業の準備のため', '授業で使用するため', '実習・課題制作のため',
                     '教員からの指示', '忘れ物を取りに行くため', '学校行事のため')
     close_reasons = ('授業終了のため', '教室の使用終了のため', '安全確認・防犯のため',
                      '教員からの指示', '学校行事終了のため')
     reasons = open_reasons
     def page(status=200, **kwargs):
-        context = dict(rooms=ROOMS, actions=ACTIONS, authenticated=authenticated,
+        context = dict(rooms=allowed_rooms, actions=ACTIONS, authenticated=authenticated,
                        teacher=teacher, student_id=account_identifier,
                        csrf=session[csrf_key], profile=profile, reasons=reasons)
         context.update(kwargs)
@@ -538,6 +592,8 @@ def student_submit(guest_mode=False):
     reason = reason_detail if reason_choice == 'その他' else reason_choice
     if room not in ROOMS or action not in ACTIONS:
         return '教室または操作の指定が正しくありません。', 400
+    if authenticated and not teacher and room not in allowed_rooms:
+        return page(403, error='このコースでは指定された教室を申請できません。')
     allowed_reasons = open_reasons if action == '開ける' else close_reasons
     if reason_choice not in allowed_reasons + ('その他',) or not 1 <= len(reason) <= 200:
         return page(400, error='申請理由を選択・入力してください。')
@@ -562,6 +618,10 @@ def student_submit(guest_mode=False):
             if not account or account['status'] != '有効' or account['role'] != session.get('role'):
                 return page(403, error='アカウントの認証を確認できませんでした。')
             if account['role'] == 'Student':
+                current_course = conn.execute('SELECT course FROM managers WHERE id=?',
+                                              (account['id'],)).fetchone()[0]
+                if room not in rooms_for_course(conn, current_course):
+                    return page(403, error='このコースでは指定された教室を申請できません。')
                 if not account['student_id']:
                     return page(403, error='学籍番号が登録されていません。')
                 identifier = account['student_id']
@@ -611,8 +671,11 @@ def public_door_status():
     with sqlite3.connect(app.config['DATABASE']) as con:
         con.row_factory = sqlite3.Row
         devices = read_device_status(con)
+        allowed_rooms = visible_rooms_for_session(con)
         items = []
         for room, device_id in ROOM_DEVICE.items():
+            if room not in allowed_rooms:
+                continue
             device = devices.get(device_id, {})
             cmd = con.execute("""SELECT action,finished_at FROM device_commands
                   WHERE room=? AND state='issued' ORDER BY id DESC LIMIT 1""", (room,)).fetchone()
@@ -1033,6 +1096,204 @@ def _parse_transfer(data, filename):
     if not records:
         raise ValueError('インポートするデータがありません。')
     return records
+
+
+# ---- Course / classroom catalog (admin only; front-end layout unchanged) ----
+def _course_csrf_ok():
+    token = session.get('csrf', '')
+    return bool(token and hmac.compare_digest(request.form.get('csrf',''), token))
+
+
+def _course_name(raw, field):
+    value = (raw or '').strip()
+    if not 1 <= len(value) <= 100 or any(ord(ch) < 32 for ch in value):
+        raise ValueError(f'{field}は1～100文字で入力してください。')
+    return value
+
+
+def _course_apply(conn, course_name, class_name, action):
+    """Called inside a transaction. Idempotent updates, reversible disables."""
+    course_name = _course_name(course_name, 'コース')
+    if action not in ('追加','無効','有効'):
+        raise ValueError('操作は追加・無効・有効のみ指定できます。')
+    course = conn.execute('SELECT id FROM course_catalog WHERE name=?', (course_name,)).fetchone()
+    if not class_name:
+        if action == '追加':
+            conn.execute('INSERT INTO course_catalog(name,active) VALUES(?,1) ON CONFLICT(name) DO UPDATE SET active=1',(course_name,))
+        elif course:
+            conn.execute('UPDATE course_catalog SET active=? WHERE id=?', (int(action=='有効'),course[0]))
+        else:
+            raise ValueError(f'コースが見つかりません: {course_name}')
+        return
+    class_name = _course_name(class_name, 'クラス')
+    if action == '追加':
+        conn.execute('INSERT INTO course_catalog(name,active) VALUES(?,1) ON CONFLICT(name) DO UPDATE SET active=1',(course_name,))
+        course = conn.execute('SELECT id FROM course_catalog WHERE name=?',(course_name,)).fetchone()
+        conn.execute("""INSERT INTO course_classes(course_id,class_name,active) VALUES(?,?,1)
+            ON CONFLICT(course_id,class_name) DO UPDATE SET active=1""",(course[0],class_name))
+    else:
+        if not course:
+            raise ValueError(f'コースが見つかりません: {course_name}')
+        cur = conn.execute('UPDATE course_classes SET active=? WHERE course_id=? AND class_name=?',
+                           (int(action=='有効'),course[0],class_name))
+        if cur.rowcount == 0:
+            raise ValueError(f'クラスが見つかりません: {course_name} / {class_name}')
+
+
+@app.get('/admin/course-classes')
+def admin_course_classes():
+    with sqlite3.connect(app.config['DATABASE']) as conn:
+        conn.row_factory=sqlite3.Row
+        courses=[dict(r) for r in conn.execute('SELECT * FROM course_catalog ORDER BY name')]
+        classes=[dict(r) for r in conn.execute("""SELECT cc.id,cc.course_id,c.name course_name,
+            cc.class_name,cc.active,c.active course_active FROM course_classes cc
+            JOIN course_catalog c ON c.id=cc.course_id ORDER BY c.name,cc.class_name""")]
+    return render_template('course_classes.html',courses=courses,classes=classes,
+       devices=tuple(ROOMS),csrf=session.get('csrf') or init_csrf(),
+       message=request.args.get('message'),error=request.args.get('error'))
+
+
+@app.post('/admin/course-classes/save')
+def admin_course_classes_save():
+    if not _course_csrf_ok(): return 'CSRF token invalid',403
+    try:
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            _course_apply(conn,request.form.get('course'),request.form.get('class_name'),request.form.get('action','追加'))
+        msg='保存しました。'
+        return redirect(url_for('admin_course_classes',message=msg))
+    except (ValueError,sqlite3.Error) as e:
+        return redirect(url_for('admin_course_classes',error=str(e)[:220]))
+
+
+@app.post('/admin/course-classes/toggle')
+def admin_course_classes_toggle():
+    """Change one class's active state without affecting its history or users."""
+    if not _course_csrf_ok():
+        return 'CSRF token invalid', 403
+    value = request.form.get('class_action', '')
+    match = re.fullmatch(r'([1-9][0-9]*):(有効|無効)', value)
+    if not match:
+        return '操作の指定が正しくありません。', 400
+    class_id, operation = int(match.group(1)), match.group(2)
+    try:
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT course_id FROM course_classes WHERE id=?',
+                               (class_id,)).fetchone()
+            if row is None:
+                return 'クラスが見つかりません。', 404
+            if operation == '有効':
+                # The parent course may have been disabled by an earlier import.
+                # Re-enable it so the class can actually appear on the student page.
+                conn.execute('UPDATE course_catalog SET active=1 WHERE id=?', (row[0],))
+            conn.execute('UPDATE course_classes SET active=? WHERE id=?',
+                         (int(operation == '有効'), class_id))
+        return redirect(url_for('admin_course_classes', message='クラスの状態を更新しました。'))
+    except sqlite3.Error as exc:
+        return redirect(url_for('admin_course_classes', error=str(exc)[:220]))
+
+
+@app.post('/admin/course-classes/bulk')
+def admin_course_classes_bulk():
+    if not _course_csrf_ok(): return 'CSRF token invalid',403
+    try:
+        ids=request.form.getlist('class_ids')
+        if not ids or len(ids)>2000 or any(not x.isdecimal() for x in ids):
+            raise ValueError('クラスを選択してください（最大2000件）。')
+        selected=list(dict.fromkeys(int(x) for x in ids))
+        active = request.form.get('action')=='有効'
+        if request.form.get('action') not in ('有効','無効'):
+            raise ValueError('操作を選択してください。')
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            for class_id in selected:
+                row = conn.execute('SELECT course_id FROM course_classes WHERE id=?', (class_id,)).fetchone()
+                if row is None:
+                    raise ValueError(f'クラスID {class_id} がありません。')
+                if active:
+                    conn.execute('UPDATE course_catalog SET active=1 WHERE id=?', (row[0],))
+                conn.execute('UPDATE course_classes SET active=? WHERE id=?', (int(active), class_id))
+        return redirect(url_for('admin_course_classes',message=f'{len(selected)}件更新しました。'))
+    except (ValueError,sqlite3.Error) as e:
+        return redirect(url_for('admin_course_classes',error=str(e)[:220]))
+
+
+@app.get('/admin/course-classes/export')
+def admin_course_classes_export():
+    with sqlite3.connect(app.config['DATABASE']) as conn:
+        rows=conn.execute("""SELECT c.name,COALESCE(cc.class_name,''),
+            CASE WHEN cc.id IS NULL THEN CASE c.active WHEN 1 THEN '有効' ELSE '無効' END
+            ELSE CASE cc.active WHEN 1 THEN '有効' ELSE '無効' END END
+            FROM course_catalog c LEFT JOIN course_classes cc ON cc.course_id=c.id
+            ORDER BY c.name,cc.class_name""").fetchall()
+    records=[('コース','クラス','状態')]+rows
+    output=request.args.get('format','xlsx')
+    if output=='csv':
+        content=StringIO(); writer=csv.writer(content); writer.writerows(records)
+        return Response('\ufeff'+content.getvalue(),mimetype='text/csv; charset=utf-8',
+                        headers={'Content-Disposition':'attachment; filename="course_classes.csv"'})
+    return send_file(_make_xlsx(records),as_attachment=True,download_name='course_classes.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.get('/admin/course-classes/template')
+def admin_course_classes_template():
+    """Import-compatible, administrator-only course/class template."""
+    # Row 1 must match the existing importer exactly. Blank rows are editable.
+    records = [('コース', 'クラス', '操作')] + [('', '', '')] * 15
+    fmt = request.args.get('format', 'xlsx').lower()
+    if fmt == 'csv':
+        output = StringIO()
+        csv.writer(output).writerows(records)
+        return Response('\ufeff' + output.getvalue(), mimetype='text/csv; charset=utf-8',
+                        headers={'Content-Disposition': 'attachment; filename="course_classes_template.csv"'})
+    return send_file(_make_xlsx(records), as_attachment=True,
+                     download_name='course_classes_template.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.post('/admin/course-classes/import')
+def admin_course_classes_import():
+    if not _course_csrf_ok(): return 'CSRF token invalid',403
+    try:
+        upload=request.files.get('file')
+        if not upload or not upload.filename: raise ValueError('CSV / XLSXを選択してください。')
+        raw=upload.read(MAX_IMPORT_BYTES+1)
+        if len(raw)>MAX_IMPORT_BYTES: raise ValueError('ファイルは2MB以内にしてください。')
+        if upload.filename.lower().endswith('.xlsx'):
+            data=_parse_xlsx(raw)
+        elif upload.filename.lower().endswith('.csv'):
+            data=list(csv.reader(StringIO(raw.decode('utf-8-sig'))))
+        else: raise ValueError('CSV / XLSXのみ対応しています。')
+        if not 1<len(data)<=MAX_IMPORT_ROWS+1:
+            raise ValueError('ヘッダー＋1～2000行が必要です。')
+        header=[str(x).strip() for x in data[0]]
+        if len(header)<3 or header[:3] not in (['コース','クラス','操作'],['コース','クラス','状態']):
+            raise ValueError('ヘッダーは「コース,クラス,操作」またはExport形式「コース,クラス,状態」です。')
+        parsed=[]; seen=set()
+        for line,row in enumerate(data[1:],2):
+            if not any(str(x).strip() for x in row): continue
+            if len(row)<3: raise ValueError(f'{line}行：3列必要です。')
+            course=_course_name(str(row[0]),'コース')
+            cls=str(row[1]).strip()
+            if cls: cls=_course_name(cls,'クラス')
+            action=str(row[2]).strip()
+            if action=='有効': action='追加'
+            if action=='削除': action='無効'
+            if action not in ('追加','無効'):
+                raise ValueError(f'{line}行：操作は追加・無効・削除です。')
+            key=(course,cls)
+            if key in seen: raise ValueError(f'{line}行：重複行 {course}/{cls}')
+            seen.add(key); parsed.append((course,cls,action))
+        if not parsed: raise ValueError('データ行がありません。')
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            for course,cls,action in parsed:
+                _course_apply(conn,course,cls,action)
+        return redirect(url_for('admin_course_classes',message=f'{len(parsed)}件をインポートしました。'))
+    except (ValueError,UnicodeError,zipfile.BadZipFile,ET.ParseError,IndexError,sqlite3.Error) as e:
+        return redirect(url_for('admin_course_classes',error=str(e)[:220]))
 
 
 @app.route('/admin/managers/export')
