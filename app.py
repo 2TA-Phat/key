@@ -185,6 +185,14 @@ def init_db():
             cid = cur.execute("SELECT id FROM course_catalog WHERE name=?", (course_name,)).fetchone()[0]
             cur.execute("INSERT OR IGNORE INTO course_classes(course_id,class_name) VALUES(?,?)", (cid,class_name))
         cur.execute("INSERT INTO course_catalog_meta(key,value) VALUES('seeded','1')")
+    # Only NEW staff-created/imported accounts require their first password change.
+    cur.execute("PRAGMA table_info(managers)")
+    if 'must_change_password' not in {r[1] for r in cur.fetchall()}:
+        cur.execute("ALTER TABLE managers ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
+    cur.execute("""CREATE TABLE IF NOT EXISTS login_failure_limits (
+        email TEXT NOT NULL, ip TEXT NOT NULL, attempted_at INTEGER NOT NULL
+    )""")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_login_failure_time ON login_failure_limits(attempted_at)")
     conn.commit()
     conn.close()
 
@@ -372,13 +380,18 @@ def admin_access_control():
                 return redirect(url_for('login'))
         else:
             with sqlite3.connect(app.config['DATABASE']) as con:
-                info = con.execute("SELECT status,role FROM managers WHERE id=?", (session.get('manager_id'),)).fetchone()
+                info = con.execute("SELECT status,role,must_change_password FROM managers WHERE id=?", (session.get('manager_id'),)).fetchone()
             if not info or info[0] != '有効' or info[1] != session.get('role') or not session.get('otp_verified'):
                 record_logout('revoked')
                 if session.get('role') == 'Administrator':
                     app.session_interface.revoke_admin(app, session)
                 session.clear()
                 return redirect(url_for('login'))
+            # Password-change gate on every request, not just the login redirect.
+            if info and info[2] and request.endpoint not in ('change_initial_password', 'logout', 'static', 'tist_tab_bootstrap'):
+                if request.path.startswith('/api/'):
+                    return jsonify(error='初期パスワードを変更してください。'), 403
+                return redirect(url_for('change_initial_password'))
     sensitive = ('/admin', '/users', '/approve/', '/reject/', '/delete/')
     if request.path.startswith(sensitive) and not is_admin():
         return redirect(url_for('login')) if not session.get('logged_in') else ('アクセス権限がありません。', 403)
@@ -392,47 +405,75 @@ def login():
             return render_template('login.html', error='タブの識別情報がありません。ページを再読み込みしてください。'), 400
         email = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
-        with sqlite3.connect(app.config['DATABASE']) as conn:
+        if not email or len(email) > 254 or not password:
+            return render_template('login.html', error='メールアドレスまたはパスワードが違います。'), 401
+        ip = request.remote_addr or 'unknown'
+        now = int(time.time())
+        with sqlite3.connect(app.config['DATABASE'], timeout=15) as conn:
             conn.row_factory = sqlite3.Row
-            manager = conn.execute("SELECT * FROM managers WHERE lower(trim(email))=?", (email,)).fetchone()
+            conn.execute('BEGIN IMMEDIATE')
+            conn.execute('DELETE FROM login_failure_limits WHERE attempted_at < ?', (now-900,))
+            failures = conn.execute('SELECT COUNT(*) FROM login_failure_limits WHERE (email=? OR ip=?) AND attempted_at>=?',
+                                    (email, ip, now-900)).fetchone()[0]
+            if failures >= 5:
+                return render_template('login.html', error='ログイン試行が多すぎます。15分後にお試しください。'), 429
+            manager = conn.execute('SELECT * FROM managers WHERE lower(trim(email))=?', (email,)).fetchone()
             if not (manager and manager['password'] and check_password_hash(manager['password'], password)):
+                conn.execute('INSERT INTO login_failure_limits(email,ip,attempted_at) VALUES(?,?,?)',(email,ip,now))
+                conn.commit()
                 return render_template('login.html', error='メールアドレスまたはパスワードが違います。'), 401
             if manager['status'] == '承認待ち':
                 return render_template('login.html', error='先生の承認待ちです。承認後にログインできます。'), 403
             if manager['status'] != '有効':
                 return render_template('login.html', error='このアカウントは現在利用できません。'), 403
-            # Only the exact Administrator role may use the requested password-only login.
-            # Other roles continue to require their email OTP.
-            if manager['role'] == 'Administrator':
-                complete_login(manager)
-                return redirect(url_for('admin_choice'))
-            # Teachers approve new students; no invitation code is required.
-            now = int(time.time())
-            if not manager['email'] or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', manager['email']):
-                return render_template('login.html', error='メールアドレスが未登録です。管理者にお問い合わせください。'), 400
-            conn.execute('BEGIN IMMEDIATE')
-            previous = conn.execute('SELECT last_sent_at, expires_at, attempts FROM login_otp WHERE manager_id=?', (manager['id'],)).fetchone()
-            # A valid password may resume an already-sent, unexpired OTP rather
-            # than being blocked by the email rate limit. Never reveal the code.
-            if previous and now < previous['expires_at'] and previous['attempts'] < 5:
-                session.clear()
-                session['pending_manager_id'] = manager['id']
-                session['otp_session_expires'] = previous['expires_at']
-                return redirect(url_for('verify_otp'))
-            if previous and now - previous['last_sent_at'] < 60:
-                return render_template('login.html', error='認証コードの再送信は60秒後にお試しください。'), 429
-            code = f'{secrets.randbelow(1000000):06d}'
-            # 送信前にOTPを無効化し、処理を直列化。送信失敗時はログイン不可。
-            conn.execute('DELETE FROM login_otp WHERE manager_id=?', (manager['id'],))
-            if not email_send_otp(manager['email'], code):
-                return render_template('login.html', error='メール送信に失敗しました。管理者にお問い合わせください。'), 503
-            conn.execute('INSERT INTO login_otp(manager_id,code_hash,expires_at,attempts,last_sent_at) VALUES(?,?,?,?,?)',
-                         (manager['id'], make_otp_hash(manager['id'], code), now + 300, 0, now))
-            session.clear()
-            session['pending_manager_id'] = manager['id']
-            session['otp_session_expires'] = now + 300
-            return redirect(url_for('verify_otp'))
+            conn.execute('DELETE FROM login_failure_limits WHERE email=? AND ip=?', (email,ip))
+            conn.commit()
+        complete_login(manager)
+        if manager['must_change_password']:
+            return redirect(url_for('change_initial_password'))
+        return redirect(url_for('admin_choice') if manager['role'] == 'Administrator' else
+                        url_for('admin') if manager['role'] in ADMIN_ROLES else url_for('student_submit'))
     return render_template('login.html')
+
+
+@app.route('/change-initial-password', methods=['GET','POST'])
+def change_initial_password():
+    if not session.get('logged_in') or not session.get('otp_verified'):
+        return redirect(url_for('login'))
+    with sqlite3.connect(app.config['DATABASE']) as conn:
+        conn.row_factory = sqlite3.Row
+        user = conn.execute("SELECT password,must_change_password,role FROM managers WHERE id=? AND status='有効'",
+                            (session.get('manager_id'),)).fetchone()
+    if not user:
+        return redirect(url_for('logout'))
+    if not user['must_change_password']:
+        return redirect(url_for('admin_choice') if user['role']=='Administrator' else
+                        url_for('admin') if user['role'] in ADMIN_ROLES else url_for('student_submit'))
+    error = None
+    if request.method == 'POST':
+        if not hmac.compare_digest(request.form.get('csrf',''),session.get('csrf','')):
+            return '認証エラー',403
+        current = request.form.get('current_password','')
+        new = request.form.get('new_password','')
+        confirm = request.form.get('confirm_password','')
+        if not check_password_hash(user['password'],current):
+            error = '現在のパスワードが違います。'
+        elif not 12 <= len(new) <= 128:
+            error = '新しいパスワードは12～128文字にしてください。'
+        elif new != confirm:
+            error = '確認用パスワードが一致しません。'
+        elif new == '11111111' or check_password_hash(user['password'],new):
+            error = '初期パスワードとは異なるパスワードを設定してください。'
+        else:
+            with sqlite3.connect(app.config['DATABASE']) as conn:
+                cur = conn.execute('UPDATE managers SET password=?,must_change_password=0 WHERE id=? AND must_change_password=1',
+                                   (generate_password_hash(new), session['manager_id']))
+                if cur.rowcount != 1:
+                    return redirect(url_for('login'))
+            return redirect(url_for('admin_choice') if user['role']=='Administrator' else
+                            url_for('admin') if user['role'] in ADMIN_ROLES else url_for('student_submit'))
+    return render_template('change_initial_password.html',csrf=session.get('csrf',''),error=error)
+
 
 @app.route('/verify-otp', methods=['GET', 'POST'])
 def verify_otp():
@@ -1371,9 +1412,9 @@ def managers_import():
                 else:
                     # Legacy username is an opaque internal ID, not a login credential.
                     internal_username = 'import_' + secrets.token_hex(12)
-                    cur = conn.execute("""INSERT INTO managers(username,password,name,email,student_id,department,course,school_class,number,role,status)
-                                     VALUES(?,?,?,?,?,?,?,?,?,'Student','無効')""",
-                                       (internal_username,generate_password_hash(secrets.token_urlsafe(32)))+params)
+                    cur = conn.execute("""INSERT INTO managers(username,password,name,email,student_id,department,course,school_class,number,role,status,must_change_password)
+                                     VALUES(?,?,?,?,?,?,?,?,?,'Student','無効',1)""",
+                                       (internal_username,generate_password_hash('11111111'))+params)
                     actor = {'id':cur.lastrowid, 'username':internal_username, 'role':'Student', 'email':email}
                     existing_by_id[actor['id']] = actor
                     existing_by_email[email] = actor
@@ -1412,56 +1453,46 @@ def admin_managers():
 # --- 管理者追加 ---
 @app.route("/admin/managers/add", methods=["GET", "POST"])
 def manager_add():
-    if not session.get("logged_in"):
-        return redirect("/login")
-
-    if request.method == "GET":
-        return render_template("manager_add.html")
-
+    if session.get('role') != 'Administrator':
+        return 'アクセス権限がありません。', 403
+    if request.method == 'GET':
+        return render_template('manager_add.html', csrf=session.get('csrf') or init_csrf())
+    if not hmac.compare_digest(request.form.get('csrf',''),session.get('csrf','')):
+        return '認証エラー',403
     username = 'manager_' + secrets.token_hex(12)
-    password = request.form.get("password", "")
-    name = request.form.get("name", "").strip()
-    email = request.form.get("email", "").strip().lower()
-    role = request.form.get("role", "Operator")
-    status = request.form.get("status", "有効")
-
-    if not password or not name or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email):
-        return render_template(
-            "manager_add.html",
-            error="必須項目を入力してください。"
-        )
-
-    
-
-    conn = sqlite3.connect(app.config["DATABASE"])
-    cur = conn.cursor()
-
+    name = request.form.get('name','').strip()
+    email = request.form.get('email','').strip().lower()
+    role = request.form.get('role','Operator')
+    status = request.form.get('status','有効')
+    password = '11111111' if role == 'Student' else request.form.get('password','')
+    if role not in ('Student','Operator','Administrator') or status not in ('有効','無効'):
+        return render_template('manager_add.html', csrf=session.get('csrf'),error='役割・状態が不正です。'),400
+    if not name or len(name)>100 or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',email) or len(email)>254 or not password:
+        return render_template('manager_add.html',csrf=session.get('csrf'),error='必須項目を入力してください。'),400
+    if role != 'Student' and len(password) < 12:
+        return render_template('manager_add.html',csrf=session.get('csrf'),error='12文字以上のパスワードを入力してください。'),400
+    student_id=department=course=school_class=None
+    number=None
+    if role=='Student':
+        student_id=request.form.get('student_id','').strip()
+        department=request.form.get('department','').strip()
+        course=request.form.get('course','').strip()
+        school_class=request.form.get('school_class','').strip()
+        raw=request.form.get('number','').strip()
+        if (not re.fullmatch(r'[0-9A-Za-z-]{3,30}',student_id) or
+            not department or len(department)>100 or not course or len(course)>100 or
+            not school_class or len(school_class)>100 or not raw.isdigit() or not 1<=int(raw)<=999):
+            return render_template('manager_add.html',csrf=session.get('csrf'),error='学生情報（学籍番号、学科、コース、クラス、出席番号）を確認してください。'),400
+        number=int(raw)
     try:
-        cur.execute("""
-            INSERT INTO managers
-            (username, password, name, email, role, status)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            username,
-            generate_password_hash(password),
-            name,
-            email,
-            role,
-            status
-        ))
-
-        conn.commit()
-
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            conn.execute("""INSERT INTO managers
+                (username,password,name,email,role,status,must_change_password,student_id,department,course,school_class,number)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (username,generate_password_hash(password),name,email,role,status,int(role=='Student'),student_id,department,course,school_class,number))
     except sqlite3.IntegrityError:
-        conn.close()
-
-        return render_template(
-            "manager_add.html",
-            error="メールアドレスは既に使用されています。"
-        )
-
-    conn.close()
-    return redirect("/admin/managers")
+        return render_template('manager_add.html',csrf=session.get('csrf'),error='メールアドレスまたは学籍番号は既に使用されています。'),409
+    return redirect(url_for('admin_managers',message='新規登録完了。Studentの初期パスワードは11111111（初回変更必須）です。' if role=='Student' else '新規登録完了。'))
 
 
 # --- 管理者詳細 ---
@@ -1551,7 +1582,7 @@ def manager_edit(manager_id):
 
         cur.execute("""
             UPDATE managers
-            SET password=?,
+            SET password=?, must_change_password=?,
                 name=?,
                 email=?,
                 role=?,
@@ -1559,6 +1590,7 @@ def manager_edit(manager_id):
             WHERE id=?
         """, (
             password_hash,
+            int(role == 'Student'),
             name,
             email,
             role,

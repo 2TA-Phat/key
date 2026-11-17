@@ -164,17 +164,14 @@
                 </div>
             {% endif %}
 
-            <form method="post">
+            <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
 
 
                 <div class="form-group">
                     <label>パスワード</label>
 
-                    <input
-                        type="password"
-                        name="password"
-                        required
-                    >
+                    <input type="password" name="password" id="staffPassword" autocomplete="new-password">
+                    <small>Student の場合は入力不要（初期パスワード：11111111、初回変更必須）。</small>
                 </div>
 
 
@@ -203,7 +200,8 @@
                 <div class="form-group">
                     <label>役割名</label>
 
-                    <select name="role">
+                    <select name="role" id="roleSelect">
+                        <option value="Student">Student</option>
 
                         <option value="Administrator">
                             Administrator
@@ -234,6 +232,16 @@
                 </div>
 
 
+                <div id="studentFields" style="display:none;border-top:1px solid #ddd;padding-top:12px">
+                    <p>学生アカウント情報（Studentのみ必須）</p>
+                    <div class="form-group"><label>学籍番号</label><input name="student_id" maxlength="30"></div>
+                    <div class="form-group"><label>学科</label><input name="department" maxlength="100"></div>
+                    <div class="form-group"><label>コース</label><input name="course" maxlength="100"></div>
+                    <div class="form-group"><label>クラス</label><input name="school_class" maxlength="100"></div>
+                    <div class="form-group"><label>出席番号</label><input name="number" type="number" min="1" max="999"></div>
+                    <p>初期パスワード：11111111（初回ログイン時に変更必須）</p>
+                </div>
+
                 <button
                     type="submit"
                     class="btn-save">
@@ -258,5 +266,6 @@
 
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 
+<script>const roleSelect=document.getElementById('roleSelect'),pw=document.getElementById('staffPassword');function refreshPassword(){pw.required=roleSelect.value!=='Student';pw.disabled=roleSelect.value==='Student';const student=roleSelect.value==='Student';document.getElementById('studentFields').style.display=student?'block':'none';document.querySelectorAll('#studentFields input').forEach(e=>e.required=student);}roleSelect.addEventListener('change',refreshPassword);refreshPassword();</script>
 </body>
 </html>
