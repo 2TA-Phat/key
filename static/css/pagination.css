@@ -1,0 +1,16 @@
+/* Pagination shared by user and manager tables */
+.tist-pagination-toolbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:12px 0; font-size:13px; }
+.tist-pagination-toolbar select { padding:6px 9px; border:1px solid #cbd5e1; border-radius:4px; background:white; }
+.tist-page-summary { color:#475569; margin-right:auto; }
+.tist-pagination-controls { display:flex; align-items:center; gap:5px; flex-wrap:wrap; }
+.tist-pagination-controls button { padding:6px 10px; background:white; border:1px solid #cbd5e1; border-radius:4px; color:#222; cursor:pointer; }
+.tist-pagination-controls button[aria-current="page"] { background:#1269cf; border-color:#1269cf; color:white; }
+.tist-pagination-controls button:disabled { opacity:.4; cursor:not-allowed; }
+.tist-pagination-footer { justify-content:flex-end; margin-top:12px; }
+
+/* Align pagination navigation on the lower right for all tables. */
+.tist-pagination-footer {
+    justify-content: flex-end;
+    width: 100%;
+    box-sizing: border-box;
+}

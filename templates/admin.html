@@ -211,8 +211,20 @@
         <h2 class="page-title">申請一覧</h2>
         <p id="esp32-status" style="font-weight:bold">ESP32: {{ 'オンライン' if device_online else 'オフライン' }} | 最終通信: {{ last_seen or '記録なし' }}</p>
 
+        <!-- 申請一覧: 表示件数とページ切替 -->
+        <div class="request-pagination-toolbar" aria-label="申請一覧の表示設定">
+          <label for="request-page-size">表示件数：</label>
+          <select id="request-page-size" aria-label="1ページの表示件数">
+            <option value="10">10件</option>
+            <option value="20" selected>20件</option>
+            <option value="50">50件</option>
+          </select>
+          <span id="request-page-summary" aria-live="polite"></span>
+          <div id="request-pagination-top" class="request-page-buttons"></div>
+        </div>
+
         <div class="table-wrap">
-          <table class="request-table">
+          <table class="request-table" id="requests-table">
             <thead>
               <tr>
                 <th>No</th>
@@ -350,11 +362,102 @@
             </tbody>
           </table>
         </div>
-
+        <div class="request-pagination-footer" id="request-pagination-bottom" aria-label="ページ切替"></div>
 
       </div>
     </div>
 
+    <style>
+      .request-pagination-toolbar, .request-pagination-footer {
+        display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+        margin: 12px 0; font-size: 14px;
+      }
+      .request-pagination-footer {
+        justify-content: flex-end;
+        width: 100%;
+      }
+      .request-pagination-toolbar select {
+        padding: 6px 10px; border: 1px solid #bbb; border-radius: 5px;
+        background: #fff; color: #222;
+      }
+      .request-pagination-toolbar #request-page-summary { margin-right: auto; }
+      .request-page-buttons, .request-pagination-footer {
+        display: flex; gap: 5px; align-items: center; flex-wrap: wrap;
+      }
+      .request-page-buttons button, .request-pagination-footer button {
+        border: 1px solid #ccc; border-radius: 5px; background: #fff;
+        padding: 6px 11px; cursor: pointer; color: #222;
+      }
+      .request-page-buttons button.active, .request-pagination-footer button.active {
+        background: #1269cf; border-color: #1269cf; color: #fff;
+      }
+      .request-page-buttons button:disabled, .request-pagination-footer button:disabled {
+        opacity: .4; cursor: not-allowed;
+      }
+    </style>
+    <script>
+      // Client-side pagination; preserves existing form submissions and status polling.
+      (function () {
+        const table = document.getElementById('requests-table');
+        const pageSizeSelect = document.getElementById('request-page-size');
+        const summary = document.getElementById('request-page-summary');
+        const top = document.getElementById('request-pagination-top');
+        const bottom = document.getElementById('request-pagination-bottom');
+        if (!table || !pageSizeSelect || !summary || !top || !bottom) return;
+
+        const rows = Array.from(table.querySelectorAll('tbody tr'))
+          .filter(row => !row.classList.contains('empty-row'));
+        let currentPage = 1;
+
+        function button(label, targetPage, disabled, active) {
+          const element = document.createElement('button');
+          element.type = 'button';
+          element.textContent = label;
+          element.disabled = disabled;
+          if (active) { element.classList.add('active'); element.setAttribute('aria-current', 'page'); }
+          if (!disabled && !active) element.addEventListener('click', () => {
+            currentPage = targetPage;
+            render();
+          });
+          return element;
+        }
+
+        function drawControls(container, totalPages) {
+          container.replaceChildren();
+          if (totalPages <= 1) return;
+          container.append(button('« 最初', 1, currentPage === 1, false));
+          container.append(button('‹ 前へ', currentPage - 1, currentPage === 1, false));
+          // Limit numbered buttons for long application histories.
+          const start = Math.max(1, Math.min(currentPage - 2, totalPages - 4));
+          const end = Math.min(totalPages, start + 4);
+          for (let page = start; page <= end; page++) {
+            container.append(button(String(page), page, false, page === currentPage));
+          }
+          container.append(button('次へ ›', currentPage + 1, currentPage === totalPages, false));
+          container.append(button('最後 »', totalPages, currentPage === totalPages, false));
+        }
+
+        function render() {
+          const size = Number(pageSizeSelect.value) || 10;
+          const totalPages = Math.max(1, Math.ceil(rows.length / size));
+          currentPage = Math.max(1, Math.min(currentPage, totalPages));
+          const startIndex = (currentPage - 1) * size;
+          rows.forEach((row, index) => {
+            row.hidden = index < startIndex || index >= startIndex + size;
+            // Existing CSS may set display on table rows; inline style wins.
+            row.style.display = row.hidden ? 'none' : '';
+          });
+          const from = rows.length ? startIndex + 1 : 0;
+          const to = Math.min(rows.length, startIndex + size);
+          summary.textContent = `${rows.length}件中 ${from}～${to}件を表示（${currentPage}/${totalPages}ページ）`;
+          drawControls(top, totalPages);
+          drawControls(bottom, totalPages);
+        }
+
+        pageSizeSelect.addEventListener('change', () => { currentPage = 1; render(); });
+        render();
+      })();
+    </script>
     <script>
       async function refreshServoStatus() {
         try {

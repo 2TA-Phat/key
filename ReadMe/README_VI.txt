@@ -22,3 +22,24 @@ Mappings: ESP32_01 => 1TA; ESP32_02 => 2TA; ESP32_03 => 2TB.
 10) ESP32_03 support requires this updated rfid_api.py and restart of Flask.
 
 Existing app.py, students, requests, Web UI, OTP and DB are not overwritten by this package.
+
+16/11/2026
+HƯỚNG DẪN / 導入手順
+====================
+Đã thêm phân trang cho 3 mục: ユーザー, 申請一覧, 管理者.
+Mặc định 20 dòng/trang; chọn 10, 20 hoặc 50; nút chuyển trang trên và dưới.
+
+Sao lưu dự án trước khi thay đổi.
+Giải nén ZIP vào thư mục gốc dự án (thư mục có app.py, templates/, static/).
+Trong ZIP, đường dẫn có tiền tố "key/"; hãy lấy các file BÊN TRONG key/ và chép đúng vị trí:
+ templates/admin.html
+ templates/users.html
+ templates/managers.html
+ static/css/pagination.css
+ static/js/pagination.js
+
+Không chép thư mục key/ thành thư mục con mới nếu dự án của bạn đã nằm trong key/.
+Khởi động lại Flask nếu cần, rồi Ctrl+F5 để tải lại trang.
+Chức năng hiện tại: phân trang phía trình duyệt; KHÔNG thay đổi database, Flask routes hay chức năng phê duyệt.
+Nếu danh sách dài hàng chục nghìn dòng, nên chuyển sang phân trang phía máy chủ.
+

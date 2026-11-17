@@ -107,7 +107,8 @@
         opacity: 0.9;
       }
     </style>
-  <script src="{{ url_for('static', filename='js/tab_session.js') }}"></script></head>
+  <script src="{{ url_for('static', filename='js/tab_session.js') }}"></script><link rel="stylesheet" href="{{ url_for('static', filename='css/pagination.css') }}">
+</head>
 
   <body>
     <!-- SIDEBAR -->
@@ -266,9 +267,9 @@
                 </div>
               </div>
 
-              <!-- CONTACT ID (学籍番号) -->
+              <!-- STUDENT ID OR EMAIL -->
               <div class="filter-row">
-                <label class="filter-label"> 学籍番号 </label>
+                <label class="filter-label"> 学籍番号・メール </label>
                 <div class="filter-inputs-group">
                   <input
                     type="text"
@@ -276,7 +277,7 @@
                     class="contact-input wide-input-full"
                     name="contact_id"
                     value="{{ request.args.get('contact_id', '') }}"
-                    placeholder="学籍番号を入力"
+                    placeholder="学籍番号またはメールアドレスを入力"
                   />
                 </div>
               </div>
@@ -297,8 +298,18 @@
 
         <!-- TABLE -->
 
+        <div class="tist-pagination-toolbar" aria-label="表示件数とページ切替">
+  <label for="tist-page-size">表示件数：</label>
+  <select id="tist-page-size" aria-label="1ページの表示件数">
+    <option value="10">10件</option>
+    <option value="20" selected>20件</option>
+    <option value="50">50件</option>
+  </select>
+  <span class="tist-page-summary" id="tist-page-summary" aria-live="polite"></span>
+  <div class="tist-pagination-controls" id="tist-page-top"></div>
+</div>
         <div class="card" style="padding: 0; overflow-x: auto">
-          <table
+          <table data-tist-paginated="users"
             style="
               width: 100%;
               border-collapse: collapse;
@@ -309,23 +320,32 @@
             <thead>
               <tr style="background-color:#f8f9fa;border-bottom:2px solid #dee2e6">
                 <th style="padding:12px">学籍番号</th>
+                <th style="padding:12px">氏名</th>
+                <th style="padding:12px">メールアドレス</th>
+                <th style="padding:12px">役割名</th>
                 <th style="padding:12px">最終ログイン日時</th>
                 <th style="padding:12px">最終ログアウト日時</th>
               </tr>
             </thead>
             <tbody>
               {% for user in users %}
-              <tr style="border-bottom:1px solid #dee2e6">
+              <tr data-page-record style="border-bottom:1px solid #dee2e6">
                 <td style="padding:10px 12px">{{ user.contact_id }}</td>
-                <td style="padding:10px 12px">{{ user.last_login or '-' }}</td>
-                <td style="padding:10px 12px">{{ user.last_logout or '-' }}</td>
+                <td style="padding:10px 12px">{{ user.name }}</td>
+                <td style="padding:10px 12px">{{ user.email }}</td>
+                <td style="padding:10px 12px">{{ user.role }}</td>
+                <td style="padding:10px 12px">{{ user.last_login or '未記録' }}</td>
+                <td style="padding:10px 12px">{{ user.last_logout or '未記録' }}</td>
               </tr>
               {% else %}
-              <tr><td colspan="3" style="text-align:center;color:#888;padding:20px">ログイン履歴がありません。</td></tr>
+              <tr><td colspan="6" style="text-align:center;color:#888;padding:20px">ログイン履歴がありません。</td></tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
+        <div class="tist-pagination-toolbar tist-pagination-footer" aria-label="ページ切替">
+  <div class="tist-pagination-controls" id="tist-page-bottom"></div>
+</div>
       </div>
     </div>
 
@@ -342,5 +362,6 @@
         }
       }
     </script>
-  </body>
+  <script src="{{ url_for('static', filename='js/pagination.js') }}"></script>
+</body>
 </html>
