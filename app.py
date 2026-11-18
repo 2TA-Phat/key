@@ -458,8 +458,8 @@ def change_initial_password():
         confirm = request.form.get('confirm_password','')
         if not check_password_hash(user['password'],current):
             error = '現在のパスワードが違います。'
-        elif not 12 <= len(new) <= 128:
-            error = '新しいパスワードは12～128文字にしてください。'
+        elif not 8 <= len(new) <= 16:
+            error = '新しいパスワードは8～16文字にしてください。'
         elif new != confirm:
             error = '確認用パスワードが一致しません。'
         elif new == '11111111' or check_password_hash(user['password'],new):
@@ -534,8 +534,10 @@ def rooms_for_course(con, course):
     rows = con.execute("""SELECT cc.class_name FROM course_classes cc
         JOIN course_catalog c ON c.id=cc.course_id
         WHERE c.name=? AND c.active=1 AND cc.active=1""", (course,)).fetchall()
-    matches = {r[0] for r in rows}
-    return tuple(room for room in ROOMS if room in matches)
+    # The catalog lists rooms belonging to this course, independently of
+    # the student's own school_class and of the installed ESP32 controllers.
+    # Unconfigured rooms are visible but cannot receive physical commands.
+    return tuple(dict.fromkeys(row[0] for row in rows))
 
 
 def visible_rooms_for_session(con):
@@ -580,13 +582,15 @@ def student_submit(guest_mode=False):
                 profile = dict(user)
     with sqlite3.connect(app.config['DATABASE']) as rooms_con:
         allowed_rooms = visible_rooms_for_session(rooms_con) if not guest_mode else ROOMS
+    requestable_rooms = tuple(room for room in allowed_rooms if room in ROOM_DEVICE)
     open_reasons = ('授業の準備のため', '授業で使用するため', '実習・課題制作のため',
                     '教員からの指示', '忘れ物を取りに行くため', '学校行事のため')
     close_reasons = ('授業終了のため', '教室の使用終了のため', '安全確認・防犯のため',
                      '教員からの指示', '学校行事終了のため')
     reasons = open_reasons
     def page(status=200, **kwargs):
-        context = dict(rooms=allowed_rooms, actions=ACTIONS, authenticated=authenticated,
+        context = dict(rooms=allowed_rooms, requestable_rooms=requestable_rooms,
+                       actions=ACTIONS, authenticated=authenticated,
                        teacher=teacher, student_id=account_identifier,
                        csrf=session[csrf_key], profile=profile, reasons=reasons)
         context.update(kwargs)
@@ -714,8 +718,12 @@ def public_door_status():
         devices = read_device_status(con)
         allowed_rooms = visible_rooms_for_session(con)
         items = []
-        for room, device_id in ROOM_DEVICE.items():
-            if room not in allowed_rooms:
+        for room in allowed_rooms:
+            device_id = ROOM_DEVICE.get(room)
+            if device_id is None:
+                items.append(dict(room=room, online=False, last_seen=None,
+                    state='unconfigured', state_at=None, configured=False,
+                    verified_physical=False))
                 continue
             device = devices.get(device_id, {})
             cmd = con.execute("""SELECT action,finished_at FROM device_commands
@@ -724,7 +732,7 @@ def public_door_status():
                   last_seen=device.get('last_seen'),
                   state=('locked' if cmd['action']=='閉める' else 'unlocked') if cmd else 'unknown',
                   state_at=cmd['finished_at'] if cmd else None,
-                  verified_physical=False))
+                  configured=True, verified_physical=False))
     response = jsonify(rooms=items)
     response.headers['Cache-Control'] = 'no-store'
     return response
@@ -1394,8 +1402,6 @@ def managers_import():
                     continue
                 if actor and item['role'] and item['role'] != actor['role']:
                     raise ValueError(f'{email}：役割はImportで変更できません。')
-                if actor and item['status'] and item['status'] != actor['status']:
-                    raise ValueError(f'{email}：状態はImportで変更できません。')
                 student_id = item['student_id'] or None
                 if student_id and student_id in claimed_ids and (not actor or claimed_ids[student_id] != actor['id']):
                     raise ValueError(f'{student_id}：学籍番号が別のアカウントで使用されています。')
@@ -1404,7 +1410,12 @@ def managers_import():
                           int(item['number']) if item['number'] else None)
                 if actor:
                     old_email = (actor['email'] or '').strip().lower()
-                    conn.execute('UPDATE managers SET name=?,email=?,student_id=?,department=?,course=?,school_class=?,number=? WHERE id=?',params+(actor['id'],))
+                    # Explicit status in the Excel/CSV file is authoritative.
+                    # A blank status keeps the existing value.
+                    updated_status = item['status'] or actor['status']
+                    conn.execute('UPDATE managers SET name=?,email=?,student_id=?,department=?,course=?,school_class=?,number=?,status=? WHERE id=?',
+                                 params+(updated_status, actor['id']))
+                    actor['status'] = updated_status
                     if old_email != email:
                         existing_by_email.pop(old_email, None)
                         existing_by_email[email] = actor
@@ -1412,9 +1423,12 @@ def managers_import():
                 else:
                     # Legacy username is an opaque internal ID, not a login credential.
                     internal_username = 'import_' + secrets.token_hex(12)
+                    # For new accounts, honor the status imported by the admin.
+                    # Blank status defaults to disabled for safety.
+                    initial_status = item['status'] or '無効'
                     cur = conn.execute("""INSERT INTO managers(username,password,name,email,student_id,department,course,school_class,number,role,status,must_change_password)
-                                     VALUES(?,?,?,?,?,?,?,?,?,'Student','無効',1)""",
-                                       (internal_username,generate_password_hash('11111111'))+params)
+                                     VALUES(?,?,?,?,?,?,?,?,?,'Student',?,1)""",
+                                       (internal_username,generate_password_hash('11111111'))+params+(initial_status,))
                     actor = {'id':cur.lastrowid, 'username':internal_username, 'role':'Student', 'email':email}
                     existing_by_id[actor['id']] = actor
                     existing_by_email[email] = actor
@@ -1422,7 +1436,7 @@ def managers_import():
                 if student_id:
                     claimed_ids[student_id] = actor['id']
             conn.commit()
-        return redirect(url_for('admin_managers', message=f'インポート完了：新規{created}件、更新{updated}件。新規アカウントは無効です。'))
+        return redirect(url_for('admin_managers', message=f'インポート完了：新規{created}件、更新{updated}件。状態はファイルの指定を反映しました。'))
     except (ValueError, UnicodeError, zipfile.BadZipFile, ET.ParseError, IndexError, sqlite3.IntegrityError) as exc:
         return redirect(url_for('admin_managers', error=str(exc)[:250]))
 

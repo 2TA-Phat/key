@@ -20,6 +20,7 @@ constexpr int RFID_SS = 21, RFID_RST = 22;
 constexpr int LOCK_ANGLE = 30, UNLOCK_ANGLE = 160;
 MFRC522 reader(RFID_SS, RFID_RST);
 Servo servo;
+bool servoReady = false;  // True only after the ESP32Servo attachment succeeds.
 unsigned long lastPoll = 0, lastScan = 0, lastHeartbeat = 0;
 unsigned long wifiAttemptAt = 0, wifiLogAt = 0;
 bool wifiWasConnected = false;
@@ -74,22 +75,40 @@ void sendResult(int commandId, const char* result) {
 }
 
 void executeCommand(JsonDocument& instruction) {
-  if (!instruction["allowed"].as<bool>()) return;
+  if (!instruction["allowed"].as<bool>()) {
+    Serial.println("COMMAND REJECTED: allowed=false");
+    return;
+  }
   int commandId = instruction["command_id"].as<int>();
   String room = instruction["room"].as<String>();
   String action = instruction["action"].as<String>();
   if (room != ROOM || commandId <= 0 || (action != "開ける" && action != "閉める")) {
+    Serial.printf("COMMAND INVALID: id=%d received room=%s local room=%s action=%s\n",
+                  commandId, room.c_str(), ROOM, action.c_str());
     if (commandId > 0) sendResult(commandId, "failed");
     return;
   }
-  if (recentlyExecuted(commandId)) { sendResult(commandId, "issued"); return; }
+  if (!servoReady || !servo.attached()) {
+    Serial.printf("SERVO ERROR: GPIO %d not attached; command %d NOT executed\n", SERVO_PIN, commandId);
+    sendResult(commandId, "failed");
+    return;
+  }
+  if (recentlyExecuted(commandId)) {
+    Serial.printf("DUPLICATE command %d: not moving servo again\n", commandId);
+    sendResult(commandId, "issued");
+    return;
+  }
   // Prevent accidental repeat within one runtime. After reset, server's one-time delivery is authoritative.
   recentIds[recentPos] = commandId;
   recentPos = (recentPos + 1) % 20;
-  servo.write(action == "開ける" ? UNLOCK_ANGLE : LOCK_ANGLE);
+  const int targetAngle = (action == "開ける") ? UNLOCK_ANGLE : LOCK_ANGLE;
+  Serial.printf("COMMAND %d: device=%s room=%s action=%s servo_GPIO=%d target=%d\n",
+                commandId, DEVICE_ID, ROOM, action.c_str(), SERVO_PIN, targetAngle);
+  servo.write(targetAngle);
   delay(700);
-  Serial.printf("Room %s, action %s, command %d\n", room.c_str(), action.c_str(), commandId);
-  sendResult(commandId, "issued"); // Issued to servo, NOT sensor-confirmed physical unlock.
+  Serial.printf("PWM sent to servo; attached=%s, target=%d. NO physical position sensor.\n",
+                servo.attached() ? "yes" : "no", targetAngle);
+  sendResult(commandId, "issued"); // PWM attempt only, NOT verified physical unlock.
 }
 
 void scanRFID() {
@@ -139,7 +158,11 @@ void setup() {
   Serial.begin(115200);
   servo.setPeriodHertz(50);
   servo.attach(SERVO_PIN, 500, 2400);
-  servo.write(LOCK_ANGLE);
+  servoReady = servo.attached();
+  Serial.printf("Servo initialization: GPIO=%d attached=%s lock=%d unlock=%d\n",
+                SERVO_PIN, servoReady ? "YES" : "NO", LOCK_ANGLE, UNLOCK_ANGLE);
+  if (servoReady) servo.write(LOCK_ANGLE);
+  else Serial.println("SERVO ATTACH FAILED: check pin and PWM resources");
   SPI.begin(18, 19, 23, RFID_SS);
   reader.PCD_Init();
   WiFi.mode(WIFI_STA);

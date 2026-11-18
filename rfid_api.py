@@ -108,6 +108,26 @@ def issue_command(con, room, action, source, student_id=None, req_id=None):
          now.strftime('%Y-%m-%d %H:%M:%S'), expires))
     return cur.lastrowid
 
+def expire_unacknowledged(con):
+    """Reconcile stale command delivery without replaying a physical lock command.
+
+    An HTTP delivery is not proof of servo movement; auto-retrying could move
+    a lock unexpectedly. A lost result is marked failed for operator review.
+    """
+    now = timestamp()
+    stale = con.execute("""SELECT id,request_id,device_id,room FROM device_commands
+        WHERE state='delivered' AND expires_at < ?""", (now,)).fetchall()
+    for cmd in stale:
+        con.execute("""UPDATE device_commands SET state='failed',finished_at=?
+            WHERE id=? AND state='delivered'""", (now, cmd['id']))
+        if cmd['request_id'] is not None:
+            con.execute("""UPDATE requests SET executed_at=?, execution_status='応答なし・要確認'
+                WHERE id=?""", (now, cmd['request_id']))
+        con.execute("""INSERT INTO access_events
+            (event_at,device_id,room,event_type,detail) VALUES(?,?,?,?,?)""",
+            (now,cmd['device_id'],cmd['room'],'device_timeout',str(cmd['id'])))
+
+
 def as_instruction(row):
     return dict(allowed=True, command_id=row['id'], room=row['room'], action=row['action'],
                 source=row['source'], expires_at=row['expires_at'])
@@ -201,7 +221,16 @@ def scan_card():
 def get_command():
     with db() as con:
         con.execute('BEGIN IMMEDIATE')
-        con.execute("UPDATE device_commands SET state='expired' WHERE state='pending' AND expires_at < ?",(timestamp(),))
+        now = timestamp()
+        # Only reconcile commands targeted to this device during its normal polling.
+        expire_unacknowledged(con)
+        expired = con.execute("""SELECT id,request_id FROM device_commands
+            WHERE state='pending' AND expires_at < ?""", (now,)).fetchall()
+        for cmd in expired:
+            con.execute("UPDATE device_commands SET state='expired' WHERE id=?", (cmd['id'],))
+            if cmd['request_id'] is not None:
+                con.execute("""UPDATE requests SET executed_at=?,execution_status='期限切れ'
+                    WHERE id=?""", (now, cmd['request_id']))
         row = con.execute('''SELECT * FROM device_commands WHERE state='pending'
             AND device_id=? AND expires_at>=? ORDER BY id LIMIT 1''',(calling_device(),timestamp())).fetchone()
         if row is None:
@@ -233,6 +262,8 @@ def result():
             return jsonify(ok=True,already_reported=True)
         if row['state'] != 'delivered':
             return jsonify(error='invalid_state'),409
+        # Result means the ESP32 attempted to write a servo PWM signal,
+        # NOT that the physical lock position was confirmed by a sensor.
         con.execute('UPDATE device_commands SET state=?,finished_at=? WHERE id=?',(outcome,timestamp(),command_id))
         if row['request_id'] is not None:
             con.execute('UPDATE requests SET executed_at=?, execution_status=? WHERE id=?',

@@ -1,0 +1,28 @@
+TIST Smart Lock - sửa Import và hiển thị phòng theo Course
+
+CÁCH CÀI
+1. SAO LƯU app.py, app.db, templates/ (đặc biệt trước khi khởi động).
+2. Thay app.py vào thư mục gốc của dự án.
+3. Chép 4 file trong thư mục templates/ vào templates/ hiện có.
+4. Giữ nguyên app.db và rfid_api.py, tab_sessions.py, static/, secrets/.
+5. Khởi động lại Flask, tải mới trang bằng Ctrl+F5.
+
+SỬA 1 - IMPORT USERS
+- Tài khoản Student mới: trạng thái theo cột 状態 trong Excel (有効 hoặc 無効); nếu bỏ trống thì mặc định 無効.
+- Tài khoản Student đã tồn tại: nếu cột 状態 có giá trị thì cập nhật trạng thái; nếu bỏ trống, giữ nguyên.
+- Không sửa trạng thái/quyền quản trị viên qua import.
+- Mật khẩu tài khoản Student mới: 11111111 (hash), phải đổi mật khẩu ở lần đăng nhập đầu tiên.
+- Tài khoản Student cũ không bị reset mật khẩu; tài khoản tự đăng ký giữ cơ chế hiện có.
+- Với tài khoản mới, cột ID phải để trống.
+
+SỬA 2 - FRONTEND PHÒNG THEO コース
+- Đọc trường course của Student từ managers rồi tìm tất cả course_classes tương ứng có active=1 và course_catalog.active=1.
+- Không lọc theo school_class của Student.
+- Phòng được gán nhưng chưa có ESP32 trong rfid_api.py sẽ hiển thị với nhãn 端末未設定 và KHÔNG thể xin mở/đóng cửa.
+- Ví dụ muốn thấy 2TA, 2TB, 大講義室, 第9実習室, 第7実習室 phải đưa cả 5 cặp course/class vào danh mục コース・クラス管理 và bật 有効; tên コース phải trùng với managers.course.
+- Để THỰC SỰ điều khiển các phòng mới, phải cấu hình và triển khai thiết bị trong rfid_api.py, ESP32 và DB. Chỉ thêm vào danh mục không tạo ra thiết bị vật lý.
+
+KIỂM TRA
+- Kiểm tra cú pháp Python và template Jinja thành công; kiểm tra SQL lọc course và trạng thái vô hiệu hóa bằng SQLite trong bộ nhớ thành công.
+- Chưa thử thực tế trên PC Windows, database/ESP32 của người dùng.
+- Lỗi ESP32 401 là vấn đề xác thực X-Device-ID/X-Device-Token riêng.
